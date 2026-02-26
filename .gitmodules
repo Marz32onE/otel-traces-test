@@ -1,0 +1,3 @@
+[submodule "pkg/nats.go"]
+	path = pkg/nats.go
+	url = git@github.com:Marz32onE/nats.go.git
