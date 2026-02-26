@@ -46,7 +46,7 @@ func main() {
 		Subjects: []string{"messages.>"},
 	})
 	if err != nil && err != nats.ErrStreamNameAlreadyInUse {
-		log.Printf("Stream creation: %v", err)
+		log.Printf("Stream creation warning: %v", err)
 	}
 
 	r := gin.Default()

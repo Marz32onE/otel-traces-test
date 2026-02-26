@@ -94,7 +94,7 @@ func main() {
 		Subjects: []string{"messages.>"},
 	})
 	if err != nil && err != nats.ErrStreamNameAlreadyInUse {
-		log.Printf("Stream creation note: %v", err)
+		log.Printf("Stream creation warning: %v", err)
 	}
 
 	// Subscribe to NATS JetStream
