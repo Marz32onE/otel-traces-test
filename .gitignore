@@ -137,3 +137,11 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Go build artifacts
+api/api
+worker/worker
+
+# Frontend build
+frontend/dist/
+frontend/node_modules/
