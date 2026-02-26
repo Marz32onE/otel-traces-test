@@ -1,0 +1,54 @@
+version: '3.9'
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data"]
+    volumes:
+      - nats_data:/data
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    environment:
+      - NATS_URL=nats://nats:4222
+    ports:
+      - "8081:8081"
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: ./worker
+    environment:
+      - NATS_URL=nats://nats:4222
+    ports:
+      - "8082:8082"
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_URL=http://localhost:8081
+        - VITE_WS_URL=ws://localhost:8082
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+      - worker
+    restart: unless-stopped
+
+volumes:
+  nats_data:
