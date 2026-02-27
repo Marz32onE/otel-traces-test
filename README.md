@@ -27,6 +27,10 @@
                                    └──────────┘
 ```
 
+### 為什麼需要 OTel Collector？
+
+API server（Go）可以直接透過 gRPC 送 trace 到 Tempo，不需要 Collector。但 **瀏覽器端的 OTLP HTTP 請求會被 CORS 擋住**，因為 Tempo 的 OTLP receiver 不支援 CORS 設定。OTel Collector 的 HTTP receiver 原生支援 CORS，作為瀏覽器與 Tempo 之間的橋樑。
+
 ## 服務說明
 
 | 服務 | 技術 | 用途 | Port |
@@ -34,10 +38,12 @@
 | **Frontend** | React 18 + TypeScript + Vite | 使用者介面，輸入訊息並即時接收 | `3000` |
 | **API** | Go (Gin) | 接收 HTTP 請求，發布訊息到 NATS | `8081` |
 | **Worker** | Go (gorilla/websocket) | 訂閱 NATS 訊息，透過 WebSocket 廣播給前端 | `8082` |
-| **NATS** | NATS 2.10 + JetStream | 訊息佇列，持久化儲存 | `4222` |
-| **OTel Collector** | OpenTelemetry Collector Contrib | 收集 traces（瀏覽器 HTTP + API gRPC），轉發到 Tempo | `4317` `4318` |
-| **Tempo** | Grafana Tempo | 分散式追蹤後端，儲存與查詢 traces | `3200` |
-| **Grafana** | Grafana | 視覺化介面，查看 traces | `3001` |
+| **NATS** | NATS 2.10 + JetStream | 訊息佇列，持久化儲存 | `4222`（client）`8222`（monitoring） |
+| **OTel Collector** | OpenTelemetry Collector Contrib | 收集 traces（瀏覽器 HTTP + API gRPC），轉發到 Tempo | `4317`（gRPC）`4318`（HTTP） |
+| **Tempo** | Grafana Tempo 2.6.1 | 分散式追蹤後端，儲存與查詢 traces | `3200` |
+| **Grafana** | Grafana（匿名 Admin 免登入） | 視覺化介面，查看 traces | `3001` |
+
+> **Note**: Tempo 鎖定在 2.6.1 版本。v2.10+ 架構大改（引入 partition ring / Kafka），與本專案的簡化設定不相容。
 
 ## 訊息流程
 
@@ -57,9 +63,10 @@ Frontend: send-message              (message.content = "hello")
        └─ API: publish-to-nats      (nats.subject = "messages.new")
 ```
 
-- **Frontend** 透過 OTLP/HTTP 將 span 送到 OTel Collector
+- **Frontend** 透過 OTLP/HTTP 將 span 送到 OTel Collector（需 CORS）
 - **API** 透過 OTLP/gRPC 將 span 送到 OTel Collector
 - **OTel Collector** 統一轉發到 Tempo
+- API 的 CORS 設定允許 `traceparent` 和 `tracestate` header，確保瀏覽器能正確傳播 trace context
 
 ## 前置需求
 
@@ -91,23 +98,52 @@ docker compose up --build
 
 ### 查看 Traces
 
-1. 開啟 http://localhost:3001（Grafana，免登入）
+1. 開啟 http://localhost:3001（Grafana，免登入，已設定匿名 Admin）
 2. 左側選 **Explore**
 3. 資料來源選 **Tempo**（已自動配置）
 4. 搜尋模式選 **Search**，Service Name 選 `frontend` 或 `api`
 5. 點擊任一 trace 即可看到完整的 span 樹
+
+### 驗證 Trace（命令列）
+
+不需要開瀏覽器，可以用 curl 模擬帶有 trace context 的請求：
+
+```bash
+# 發送訊息（附帶自訂 trace ID）
+curl -X POST http://localhost:8081/api/message \
+  -H "Content-Type: application/json" \
+  -H "traceparent: 00-aaaabbbbccccdddd1111222233334444-1234567890abcdef-01" \
+  -d '{"text":"hello trace"}'
+
+# 等幾秒後，透過 Tempo API 查詢該 trace
+curl http://localhost:3200/api/traces/aaaabbbbccccdddd1111222233334444
+```
+
+回傳的 JSON 應包含 `publish-to-nats` 和 `POST /api/message` 兩個 span。
+
+### 停止與清理
+
+```bash
+# 停止所有服務
+docker compose down
+
+# 停止並刪除所有資料（NATS、Tempo、Grafana volumes）
+docker compose down -v
+```
 
 ## 專案結構
 
 ```
 .
 ├── api/                        # API server（Go + Gin）
-│   ├── Dockerfile
+│   ├── Dockerfile              # 從根目錄 build（需存取 pkg/nats.go）
 │   ├── go.mod                  # replace => ../pkg/nats.go
+│   ├── go.sum
 │   └── main.go                 # OTel + otelgin + NATS publish
 ├── worker/                     # WebSocket worker（Go）
-│   ├── Dockerfile
+│   ├── Dockerfile              # 從根目錄 build（需存取 pkg/nats.go）
 │   ├── go.mod                  # replace => ../pkg/nats.go
+│   ├── go.sum
 │   └── main.go                 # NATS subscribe + WS broadcast
 ├── frontend/                   # React 前端（TypeScript）
 │   ├── Dockerfile
@@ -130,10 +166,12 @@ docker compose up --build
 │       └── datasources/
 │           └── datasource.yml  # 自動配置 Tempo datasource
 ├── docker-compose.yml
-├── otel-collector-config.yaml
-├── tempo.yaml
+├── otel-collector-config.yaml  # Collector 設定（含 CORS for browser）
+├── tempo.yaml                  # Tempo 2.6.1 設定（local storage）
 └── LICENSE                     # Apache 2.0
 ```
+
+> **Note**: `api/Dockerfile` 和 `worker/Dockerfile` 的 build context 設為專案根目錄（而非各自的子目錄），因為 `go.mod` 中的 `replace` 指令需要存取 `../pkg/nats.go`。
 
 ## Git Submodule
 
