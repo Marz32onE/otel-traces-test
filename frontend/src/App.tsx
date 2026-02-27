@@ -1,14 +1,16 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type CSSProperties, type KeyboardEvent } from 'react'
+import { context, propagation, trace, SpanStatusCode } from '@opentelemetry/api'
+import { tracer } from './tracing'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8081'
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8082'
 
 export default function App() {
   const [inputText, setInputText] = useState('')
-  const [messages, setMessages] = useState([])
+  const [messages, setMessages] = useState<string[]>([])
   const [wsStatus, setWsStatus] = useState('Connecting...')
-  const wsRef = useRef(null)
-  const reconnectTimerRef = useRef(null)
+  const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     connectWS()
@@ -28,28 +30,43 @@ export default function App() {
       reconnectTimerRef.current = setTimeout(connectWS, 3000)
     }
     ws.onerror = () => setWsStatus('Error')
-    ws.onmessage = (event) => {
-      setMessages((prev) => [...prev, event.data])
+    ws.onmessage = (event: MessageEvent) => {
+      setMessages((prev) => [...prev, event.data as string])
     }
   }
 
   async function handleSend() {
     const text = inputText.trim()
     if (!text) return
+
+    const span = tracer.startSpan('send-message', {
+      attributes: { 'message.content': text },
+    })
+    const ctx = trace.setSpan(context.active(), span)
+
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      propagation.inject(ctx, headers)
+
       const res = await fetch(`${API_URL}/api/message`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ text }),
       })
       if (!res.ok) throw new Error('Failed to send')
+      span.setStatus({ code: SpanStatusCode.OK })
       setInputText('')
     } catch (err) {
-      alert(`Error: ${err.message}`)
+      const error = err instanceof Error ? err : new Error(String(err))
+      span.setStatus({ code: SpanStatusCode.ERROR, message: error.message })
+      span.recordException(error)
+      alert(`Error: ${error.message}`)
+    } finally {
+      span.end()
     }
   }
 
-  function handleKeyDown(e) {
+  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') handleSend()
   }
 
@@ -80,7 +97,7 @@ export default function App() {
   )
 }
 
-const styles = {
+const styles: Record<string, CSSProperties> = {
   container: {
     maxWidth: '600px',
     margin: '40px auto',

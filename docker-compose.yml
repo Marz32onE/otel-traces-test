@@ -15,19 +15,60 @@ services:
       timeout: 5s
       retries: 10
 
+  tempo:
+    image: grafana/tempo:latest
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - tempo
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - tempo
+
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     environment:
       - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
     ports:
       - "8081:8081"
     depends_on:
       nats:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     restart: unless-stopped
 
   worker:
-    build: ./worker
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
     environment:
       - NATS_URL=nats://nats:4222
     ports:
@@ -43,6 +84,7 @@ services:
       args:
         - VITE_API_URL=http://localhost:8081
         - VITE_WS_URL=ws://localhost:8082
+        - VITE_OTEL_COLLECTOR_URL=http://localhost:4318
     ports:
       - "3000:3000"
     depends_on:
@@ -52,3 +94,5 @@ services:
 
 volumes:
   nats_data:
+  tempo_data:
+  grafana_data:
