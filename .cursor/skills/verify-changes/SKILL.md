@@ -1,6 +1,6 @@
 ---
 name: verify-changes
-description: Enforces a test-and-debug cycle after every code change. Automatically verifies builds, service health, and end-to-end functionality before marking work as done. Use proactively on ALL tasks that modify code, config, or infrastructure files.
+description: Enforces a test-and-debug cycle after every code change. Verifies builds, service health, and end-to-end functionality before marking work done. Use when the user says verify, test, or when modifying code, config, Docker, or infrastructure in this project.
 ---
 
 # Verify Changes
@@ -66,16 +66,17 @@ docker compose logs --tail 5 <service> 2>&1 | grep -i "error\|fatal\|panic"
 When changes touch **any** of these: `api/main.go`, `frontend/src/tracing.ts`, `frontend/src/App.tsx`, `otel-collector-config.yaml`, `tempo.yaml`, `docker-compose.yml`:
 
 ```bash
-# 1. Send a test message with known trace ID
+# Use valid hex trace ID (32 chars 0-9a-f) so Tempo accepts the query
+TRACE_ID="deadbeef000000000000000000000001"
+SPAN_ID="1234567890abcdef"
 curl -s http://localhost:8081/api/message -X POST \
   -H "Content-Type: application/json" \
-  -H "traceparent: 00-test0000000000000000000000000000-1234567890abcdef-01" \
+  -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" \
   -d '{"text":"skill-verify-test"}'
 # Must return: {"status":"published"}
 
-# 2. Wait for ingestion, then query Tempo
 sleep 5
-curl -s http://localhost:3200/api/traces/test0000000000000000000000000000
+curl -s "http://localhost:3200/api/traces/${TRACE_ID}"
 # Must return JSON with "publish-to-nats" span
 ```
 

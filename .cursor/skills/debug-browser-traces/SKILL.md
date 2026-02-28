@@ -1,6 +1,6 @@
 ---
 name: debug-browser-traces
-description: Systematic debugging workflow for browser-to-backend distributed tracing issues, especially "root span not yet received" in Grafana/Tempo. Use when browser OTel spans are missing, traces are incomplete, or rootServiceName shows unexpected values.
+description: Step-by-step workflow to fix browser-to-backend tracing issues. Covers "root span not yet received" in Grafana/Tempo, missing frontend spans, and OTLP export failures. Use when browser OTel spans are missing, Grafana shows incomplete traces, or rootServiceName is wrong.
 ---
 
 # Debug Browser Traces

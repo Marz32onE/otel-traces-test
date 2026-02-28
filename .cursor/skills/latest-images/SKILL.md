@@ -1,6 +1,6 @@
 ---
 name: latest-images
-description: Ensures all Docker images in docker-compose.yml and Dockerfiles use the latest compatible versions. Use when modifying docker-compose.yml, Dockerfiles, or when the user mentions image versions, upgrades, or dependencies.
+description: Keeps Docker images in docker-compose.yml and Dockerfiles at latest compatible versions. Defines compatibility rules (e.g. Tempo 2.9.0, nats:alpine) and verification steps. Use when editing docker-compose.yml, Dockerfiles, or when the user asks to upgrade or pin image versions.
 ---
 
 # Latest Docker Images
