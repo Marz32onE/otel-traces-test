@@ -38,12 +38,12 @@ API server（Go）可以直接透過 gRPC 送 trace 到 Tempo，不需要 Collec
 | **Frontend** | React 18 + TypeScript + Vite | 使用者介面，輸入訊息並即時接收 | `3000` |
 | **API** | Go (Gin) | 接收 HTTP 請求，發布訊息到 NATS | `8081` |
 | **Worker** | Go (gorilla/websocket) | 訂閱 NATS 訊息，透過 WebSocket 廣播給前端 | `8082` |
-| **NATS** | NATS 2.10 + JetStream | 訊息佇列，持久化儲存 | `4222`（client）`8222`（monitoring） |
-| **OTel Collector** | OpenTelemetry Collector Contrib | 收集 traces（瀏覽器 HTTP + API gRPC），轉發到 Tempo | `4317`（gRPC）`4318`（HTTP） |
-| **Tempo** | Grafana Tempo 2.6.1 | 分散式追蹤後端，儲存與查詢 traces | `3200` |
-| **Grafana** | Grafana（匿名 Admin 免登入） | 視覺化介面，查看 traces | `3001` |
+| **NATS** | NATS (Alpine) + JetStream | 訊息佇列，持久化儲存 | `4222`（client）`8222`（monitoring） |
+| **OTel Collector** | OpenTelemetry Collector Contrib (latest) | 收集 traces（瀏覽器 HTTP + API gRPC），轉發到 Tempo | `4317`（gRPC）`4318`（HTTP） |
+| **Tempo** | Grafana Tempo 2.9.0 | 分散式追蹤後端，儲存與查詢 traces | `3200` |
+| **Grafana** | Grafana latest（匿名 Admin 免登入） | 視覺化介面，查看 traces | `3001` |
 
-> **Note**: Tempo 鎖定在 2.6.1 版本。v2.10+ 架構大改（引入 partition ring / Kafka），與本專案的簡化設定不相容。
+> **Note**: Tempo 鎖定 2.9.0（v2.10+ 不相容），NATS 使用 `alpine` 變體（healthcheck 需要 `wget`）。
 
 ## 訊息流程
 
@@ -156,7 +156,7 @@ docker compose down -v
 │   └── src/
 │       ├── main.tsx
 │       ├── App.tsx             # UI + OTel span 建立
-│       └── tracing.ts          # OTel WebTracerProvider 初始化
+│       └── tracing.ts          # OTel 初始化（SDK v2.x + OTLPTraceExporter FetchTransport）
 ├── pkg/
 │   └── nats.go/                # Git submodule — NATS Go client fork
 ├── nats/
@@ -167,7 +167,7 @@ docker compose down -v
 │           └── datasource.yml  # 自動配置 Tempo datasource
 ├── docker-compose.yml
 ├── otel-collector-config.yaml  # Collector 設定（含 CORS for browser）
-├── tempo.yaml                  # Tempo 2.6.1 設定（local storage）
+├── tempo.yaml                  # Tempo 2.9.0 設定（local storage）
 └── LICENSE                     # Apache 2.0
 ```
 
@@ -205,6 +205,38 @@ replace github.com/nats-io/nats.go => ../pkg/nats.go
 | `VITE_API_URL` | `http://localhost:8081` | API server URL |
 | `VITE_WS_URL` | `ws://localhost:8082` | WebSocket worker URL |
 | `VITE_OTEL_COLLECTOR_URL` | `http://localhost:4318` | OTel Collector HTTP 端點 |
+
+## 疑難排解
+
+### 重啟 OTel Collector 後 API traces 消失
+
+重啟 `otel-collector` 後，API 日誌出現 `dial tcp ...: no route to host`。Docker 重啟容器可能分配新 IP，Go gRPC client 快取了舊 IP。需一起重啟：
+
+```bash
+docker compose restart otel-collector api
+```
+
+### Docker build 快取導致前端更新未生效
+
+修改前端程式碼後 `docker compose up --build` 行為沒變，因為 Docker layer cache 未偵測到變化。強制無快取重建：
+
+```bash
+docker compose build --no-cache frontend
+docker compose up -d frontend
+```
+
+### Tempo 查詢 trace 回傳 404
+
+送完訊息後立刻查 Tempo API 得到 404。Tempo 需要數秒將 span 從 WAL 刷入可查詢的 block，等待後再查即可：
+
+```bash
+sleep 5
+curl "http://localhost:3200/api/search?q={}&limit=5"
+```
+
+### Go 服務的 Dockerfile build context
+
+`api/Dockerfile` 和 `worker/Dockerfile` 的 build context 設為專案根目錄（`context: .`），因為 `go.mod` 的 `replace` 指令需要存取 `pkg/nats.go` submodule。改動 Dockerfile 時注意路徑相對於根目錄（如 `COPY api/go.mod api/go.sum ./api/`）。
 
 ## License
 
