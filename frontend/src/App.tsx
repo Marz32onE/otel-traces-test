@@ -35,11 +35,11 @@ export default function App() {
     }
   }
 
-  async function handleSend() {
+  async function sendToEndpoint(endpoint: string, spanName: string) {
     const text = inputText.trim()
     if (!text) return
 
-    const span = tracer.startSpan('send-message', {
+    const span = tracer.startSpan(spanName, {
       attributes: { 'message.content': text },
     })
     const ctx = trace.setSpan(context.active(), span)
@@ -48,7 +48,7 @@ export default function App() {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       propagation.inject(ctx, headers)
 
-      const res = await fetch(`${API_URL}/api/message`, {
+      const res = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ text }),
@@ -67,7 +67,7 @@ export default function App() {
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') handleSend()
+    if (e.key === 'Enter') sendToEndpoint('/api/message', 'send-message')
   }
 
   return (
@@ -83,8 +83,21 @@ export default function App() {
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <button style={styles.button} onClick={handleSend}>
-          Send
+      </div>
+      <div style={styles.buttonRow}>
+        <button
+          style={styles.button}
+          onClick={() => sendToEndpoint('/api/message', 'send-message')}
+          title="nats.JetStreamContext (內建)"
+        >
+          送出（nats 內建 JetStreamContext）
+        </button>
+        <button
+          style={{ ...styles.button, ...styles.buttonSecondary }}
+          onClick={() => sendToEndpoint('/api/message-v2', 'send-message-v2')}
+          title="jetstream 套件 Publisher 介面"
+        >
+          送出（jetstream 套件 Publisher）
         </button>
       </div>
       <textarea
@@ -106,7 +119,8 @@ const styles: Record<string, CSSProperties> = {
   },
   title: { marginBottom: '8px' },
   status: { marginBottom: '16px', color: '#555' },
-  inputRow: { display: 'flex', gap: '8px', marginBottom: '16px' },
+  inputRow: { display: 'flex', gap: '8px', marginBottom: '8px' },
+  buttonRow: { display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' as const },
   input: {
     flex: 1,
     padding: '8px 12px',
@@ -115,13 +129,16 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: '4px',
   },
   button: {
-    padding: '8px 20px',
-    fontSize: '16px',
+    padding: '8px 16px',
+    fontSize: '14px',
     backgroundColor: '#4f46e5',
     color: '#fff',
     border: 'none',
     borderRadius: '4px',
     cursor: 'pointer',
+  },
+  buttonSecondary: {
+    backgroundColor: '#0d9488',
   },
   textarea: {
     width: '100%',

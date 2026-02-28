@@ -10,6 +10,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -22,8 +23,9 @@ import (
 )
 
 var (
-	jsCtx  nats.JetStreamContext
-	tracer trace.Tracer
+	jsCtx   nats.JetStreamContext
+	jsNew   jetstream.JetStream
+	tracer  trace.Tracer
 )
 
 func initTracer() func() {
@@ -106,6 +108,19 @@ func main() {
 		log.Printf("Stream creation warning: %v", err)
 	}
 
+	jsNew, err = jetstream.New(nc)
+	if err != nil {
+		log.Fatalf("Failed to create jetstream.JetStream: %v", err)
+	}
+	ctx := context.Background()
+	_, err = jsNew.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+		Name:     "MESSAGES",
+		Subjects: []string{"messages.>"},
+	})
+	if err != nil {
+		log.Printf("JetStream CreateOrUpdateStream warning: %v", err)
+	}
+
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
@@ -118,6 +133,7 @@ func main() {
 	r.Use(otelgin.Middleware("api"))
 
 	r.POST("/api/message", handleMessage)
+	r.POST("/api/message-v2", handleMessageV2)
 
 	log.Println("API server starting on :8081")
 	if err := r.Run(":8081"); err != nil {
@@ -146,6 +162,37 @@ func handleMessage(c *gin.Context) {
 	defer span.End()
 
 	_, err := jsCtx.Publish("messages.new", []byte(req.Text))
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
+		return
+	}
+
+	span.SetStatus(codes.Ok, "")
+	c.JSON(http.StatusOK, gin.H{"status": "published"})
+}
+
+// handleMessageV2 publishes to NATS using jetstream package (Publisher interface).
+// Same behaviour as handleMessage; only the NATS client API differs.
+func handleMessageV2(c *gin.Context) {
+	var req MessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+	_, span := tracer.Start(ctx, "publish-to-nats",
+		trace.WithAttributes(
+			attribute.String("message.content", req.Text),
+			attribute.String("nats.subject", "messages.new"),
+			attribute.String("nats.api", "jetstream.Publisher"),
+		),
+	)
+	defer span.End()
+
+	_, err := jsNew.Publish(ctx, "messages.new", []byte(req.Text))
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
