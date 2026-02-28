@@ -14,12 +14,22 @@ function toHex(bytes: number[] | Uint8Array | string): string {
     .join('')
 }
 
+// OTLP attribute value by type (semantic convention)
+function attrToOtlpValue(value: unknown): { stringValue?: string; intValue?: string; doubleValue?: number; boolValue?: boolean } {
+  if (typeof value === 'number') {
+    if (Number.isInteger(value)) return { intValue: String(value) }
+    return { doubleValue: value }
+  }
+  if (typeof value === 'boolean') return { boolValue: value }
+  return { stringValue: String(value) }
+}
+
 function spansToOtlpJson(spans: ReadableSpan[]) {
   const resource = spans[0]?.resource
   const resAttrs = resource
     ? Object.entries(resource.attributes).map(([key, value]) => ({
         key,
-        value: { stringValue: String(value) },
+        value: attrToOtlpValue(value),
       }))
     : []
 
@@ -40,7 +50,7 @@ function spansToOtlpJson(spans: ReadableSpan[]) {
               endTimeUnixNano: String(hrTimeToNanoseconds(s.endTime)),
               attributes: Object.entries(s.attributes).map(([key, value]) => ({
                 key,
-                value: { stringValue: String(value) },
+                value: attrToOtlpValue(value),
               })),
               status: { code: s.status.code },
             })),
@@ -75,7 +85,10 @@ const fetchExporter: SpanExporter = {
 }
 
 const provider = new WebTracerProvider({
-  resource: resourceFromAttributes({ 'service.name': 'frontend' }),
+  resource: resourceFromAttributes({
+    'service.name': 'frontend',
+    'service.version': '0.0.1',
+  }),
   spanProcessors: [new SimpleSpanProcessor(fetchExporter)],
 })
 

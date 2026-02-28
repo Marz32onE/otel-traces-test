@@ -1,11 +1,13 @@
 ---
 name: verify-changes
-description: Enforces a test-and-debug cycle after every code change. Verifies builds, service health, and end-to-end functionality before marking work done. Use when the user says verify, test, or when modifying code, config, Docker, or infrastructure in this project.
+description: Enforces build-and-test verification after every code or config change in this OTel traces project (api, worker, frontend, pkg/nats.go, Docker, OTel/Tempo). Ensures Go builds pass, services stay healthy, and trace pipeline works. Use when the user says verify/test, or when modifying any project file so that each change is self-verified before marking work done.
 ---
 
 # Verify Changes
 
-Every change MUST pass through a verification cycle before completion. Never consider a task done based on code edits alone.
+**When to run**: After **every** code or config change in this repo (api, worker, frontend, pkg/nats.go, Docker, OTel/Tempo). The agent must self-verify before marking any task done.
+
+Every change MUST pass a verification cycle before completion. Never consider a task done on code edits alone.
 
 ## Core Rule
 
@@ -13,60 +15,77 @@ Every change MUST pass through a verification cycle before completion. Never con
 EDIT → BUILD → RUN → TEST → (fix if broken) → DONE
 ```
 
-If any step fails, fix the issue and restart the cycle from BUILD. Do NOT skip steps.
+If any step fails, fix and restart from BUILD. Do not skip steps.
 
-## Verification by File Type
+## Project Context (from README)
 
-### Go files (`api/**/*.go`, `worker/**/*.go`)
+- **API** (Go, :8081): receives HTTP, publishes to NATS JetStream; two paths: `POST /api/message` (built-in JetStreamContext), `POST /api/message-v2` (jetstream pkg).
+- **Worker** (Go, :8082): subscribes to NATS, broadcasts via WebSocket.
+- **Frontend** (:3000): React + OTel; sends traceparent to API; exports OTLP to Collector.
+- **Trace path**: Frontend → API (otelgin + producer span) → OTel Collector → Tempo (:3200). Producer span name is `send <subject>` (e.g. `send messages.new`).
+- **Build**: `api` and `worker` use `replace` to `pkg/nats.go`; their Dockerfiles use repo root as build context.
 
-1. **Build**: `cd <module> && go build -o /dev/null .`
-2. **Lint**: Run ReadLints on edited files
-3. **If docker is running**: restart the affected service and check logs
+## Verification by Changed Paths
+
+Decide what to verify from which files were edited. Then run the matching steps.
+
+### 1. Go — API (`api/**/*.go`, `api/go.mod`, `api/go.sum`)
+
+| Step | Command / check |
+|------|------------------|
+| Tidy (if go.mod/sum changed) | `cd api && go mod tidy` |
+| Build | `cd api && go build -o /dev/null .` |
+| Lint | ReadLints on edited `api/**` files |
+| Run (if compose up) | `docker compose up -d --build api` then `docker compose logs api --tail 10` |
+
+If `api/main.go` was changed, also run **End-to-End Trace Verification** below.
+
+### 2. Go — Worker (`worker/**/*.go`, `worker/go.mod`, `worker/go.sum`)
+
+| Step | Command / check |
+|------|------------------|
+| Tidy (if go.mod/sum changed) | `cd worker && go mod tidy` |
+| Build | `cd worker && go build -o /dev/null .` |
+| Lint | ReadLints on edited `worker/**` files |
+| Run (if compose up) | `docker compose up -d --build worker` then `docker compose logs worker --tail 10` |
+
+### 3. Shared Go — NATS (`pkg/nats.go/**`)
+
+Both API and Worker depend on this (replace in go.mod). Verify **both** modules:
 
 ```bash
-# Example
-cd api && go build -o /dev/null .
-# If compose is up:
-docker compose restart api && sleep 2 && docker compose logs api --tail 10
+cd api    && go build -o /dev/null . && \
+cd ../worker && go build -o /dev/null .
 ```
 
-### Frontend files (`frontend/src/**/*.ts`, `frontend/src/**/*.tsx`)
+If compose is up: `docker compose up -d --build api worker`.
 
-1. **Lint**: Run ReadLints on edited files
-2. **If docker is running**: rebuild and verify
+### 4. Frontend (`frontend/src/**`, `frontend/package.json`, `frontend/vite.config.js`, etc.)
 
-```bash
-docker compose up -d --build frontend && sleep 3
-curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/
-```
+| Step | Command / check |
+|------|------------------|
+| Lint | ReadLints on edited frontend files |
+| Run (if compose up) | `docker compose up -d --build frontend` then `sleep 3` and `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` → expect 200 |
 
-### Docker / Infrastructure (`docker-compose.yml`, `tempo.yaml`, `otel-collector-config.yaml`, `**/Dockerfile`)
+If `frontend/src/App.tsx` or `frontend/src/tracing.ts` was changed, also run **End-to-End Trace Verification**.
 
-1. **Restart affected services**: `docker compose up -d` (add `--build` if Dockerfile changed)
-2. **Health check**: ALL services must be running
+### 5. Docker / Infra (`docker-compose.yml`, `**/Dockerfile`, `tempo.yaml`, `otel-collector-config.yaml`, `nats/**`, `grafana/**`)
 
-```bash
-docker compose ps --format "table {{.Name}}\t{{.Status}}" | grep -v "Up" | grep -v "NAME"
-# ^ This must produce empty output (no crashed services)
-```
+| Step | Command / check |
+|------|------------------|
+| Up | `docker compose up -d` (add `--build` if Dockerfile or compose changed) |
+| All Up | `docker compose ps` — no service in Exit/Failed; grep for non-"Up" status should show no service rows |
+| Logs | For any touched service: `docker compose logs --tail 5 <service>` and ensure no `error`/`fatal`/`panic` |
 
-3. **Check logs for errors**:
-
-```bash
-docker compose logs --tail 5 <service> 2>&1 | grep -i "error\|fatal\|panic"
-```
-
-### Go module files (`go.mod`, `go.sum`)
-
-1. **Tidy**: `go mod tidy`
-2. **Build**: `go build -o /dev/null .`
+If `docker-compose.yml`, `otel-collector-config.yaml`, or `tempo.yaml` was changed, also run **End-to-End Trace Verification**.
 
 ## End-to-End Trace Verification
 
-When changes touch **any** of these: `api/main.go`, `frontend/src/tracing.ts`, `frontend/src/App.tsx`, `otel-collector-config.yaml`, `tempo.yaml`, `docker-compose.yml`:
+Run when changes touch **any** of: `api/main.go`, `frontend/src/App.tsx`, `frontend/src/tracing.ts`, `otel-collector-config.yaml`, `tempo.yaml`, `docker-compose.yml`.
+
+1. **Trigger a trace** (valid 32-char hex trace ID so Tempo accepts the query):
 
 ```bash
-# Use valid hex trace ID (32 chars 0-9a-f) so Tempo accepts the query
 TRACE_ID="deadbeef000000000000000000000001"
 SPAN_ID="1234567890abcdef"
 curl -s http://localhost:8081/api/message -X POST \
@@ -74,31 +93,72 @@ curl -s http://localhost:8081/api/message -X POST \
   -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" \
   -d '{"text":"skill-verify-test"}'
 # Must return: {"status":"published"}
-
-sleep 5
-curl -s "http://localhost:3200/api/traces/${TRACE_ID}"
-# Must return JSON with "publish-to-nats" span
 ```
 
-If the trace query returns 404 or empty, the tracing pipeline is broken — debug before proceeding.
+2. **Optional**: Same for v2 endpoint to confirm both paths work:
+
+```bash
+curl -s http://localhost:8081/api/message-v2 -X POST \
+  -H "Content-Type: application/json" \
+  -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" \
+  -d '{"text":"skill-verify-v2"}'
+# Must return: {"status":"published"}
+```
+
+3. **Query Tempo** (wait for flush):
+
+```bash
+sleep 5
+curl -s "http://localhost:3200/api/traces/${TRACE_ID}"
+```
+
+4. **Assert**: Response JSON contains spans from service `api`, including:
+   - A producer span (e.g. `send messages.new`, `send <subject>`, or `publish-to-nats`),
+   - And an HTTP span like `POST /api/message` (or `/api/message-v2`).
+
+If the trace query returns 404 or no api spans, the tracing pipeline is broken — debug before proceeding.
 
 ## Failure Response Protocol
 
-When a verification step fails:
+1. **Read the error** — build output, logs, or HTTP response.
+2. **Diagnose** — root cause from actual message, not guesswork.
+3. **Fix** — minimal change to resolve.
+4. **Re-verify** — run the full verification for the affected file type again.
+5. **Never skip** — do not claim "it should work" without running the steps and showing success.
 
-1. **Read the error** — check logs, build output, or HTTP response
-2. **Diagnose** — identify root cause (don't guess, read the actual error)
-3. **Fix** — make the minimal change to resolve the issue
-4. **Re-verify** — restart the full verification cycle for the file type
-5. **Never skip** — do not tell the user "it should work" without proof
+## What Counts as Verified
 
-## What Counts as "Verified"
+| Check | Evidence |
+|-------|----------|
+| Go build | Exit code 0 for `go build -o /dev/null .` in the right module |
+| Services running | `docker compose ps` — all relevant services "Up" |
+| API | `curl` to `/api/message` or `/api/message-v2` returns `{"status":"published"}` with HTTP 200 |
+| Frontend | `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` returns 200 |
+| Trace pipeline | Tempo `GET /api/traces/<TRACE_ID>` returns JSON with api spans (e.g. producer span + `POST /api/message`) |
+| No regressions | No new errors in logs; previously-working services still running |
 
-| Check | Evidence required |
-|---|---|
-| Go build | Exit code 0, no output |
-| Service running | `docker compose ps` shows "Up" |
-| API works | `curl` returns expected JSON with HTTP 200 |
-| Frontend serves | `curl` returns HTTP 200 on `localhost:3000` |
-| Trace pipeline | Tempo API returns spans with correct trace ID |
-| No regressions | All previously-working services still running |
+## Quick Reference: One-Shot Full Stack Check
+
+When many areas changed or in doubt, run a full pass:
+
+```bash
+# Build
+cd api    && go build -o /dev/null . && cd ../worker && go build -o /dev/null .
+
+# Stack
+docker compose up -d --build api frontend worker
+
+# Health
+sleep 3
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/
+curl -s http://localhost:8081/api/message -X POST -H "Content-Type: application/json" -d '{"text":"ok"}'
+curl -s http://localhost:8081/api/message-v2 -X POST -H "Content-Type: application/json" -d '{"text":"ok"}'
+
+# E2E trace (then query Tempo after sleep 5)
+TRACE_ID="deadbeef000000000000000000000002"
+SPAN_ID="1234567890abcdef"
+curl -s http://localhost:8081/api/message -X POST -H "Content-Type: application/json" -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" -d '{"text":"e2e"}'
+sleep 5 && curl -s "http://localhost:3200/api/traces/${TRACE_ID}" | head -c 500
+```
+
+All steps must succeed for the change to be considered verified.

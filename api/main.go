@@ -45,7 +45,10 @@ func initTracer() func() {
 	}
 
 	res, err := resource.New(ctx,
-		resource.WithAttributes(attribute.String("service.name", "api")),
+		resource.WithAttributes(
+			attribute.String("service.name", "api"),
+			attribute.String("service.version", "0.0.1"),
+		),
 	)
 	if err != nil {
 		log.Fatalf("Failed to create resource: %v", err)
@@ -153,15 +156,21 @@ func handleMessage(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	_, span := tracer.Start(ctx, "publish-to-nats",
+	subject := "messages.new"
+	payload := []byte(req.Text)
+	_, span := tracer.Start(ctx, "send "+subject,
+		trace.WithSpanKind(trace.SpanKindProducer),
 		trace.WithAttributes(
+			attribute.String("messaging.system", "nats"),
+			attribute.String("messaging.operation.name", "send"),
+			attribute.String("messaging.destination.name", subject),
+			attribute.Int("messaging.message.body.size", len(payload)),
 			attribute.String("message.content", req.Text),
-			attribute.String("nats.subject", "messages.new"),
 		),
 	)
 	defer span.End()
 
-	_, err := jsCtx.Publish("messages.new", []byte(req.Text))
+	_, err := jsCtx.Publish(subject, payload)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -183,16 +192,22 @@ func handleMessageV2(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	_, span := tracer.Start(ctx, "publish-to-nats",
+	subject := "messages.new"
+	payload := []byte(req.Text)
+	_, span := tracer.Start(ctx, "send "+subject,
+		trace.WithSpanKind(trace.SpanKindProducer),
 		trace.WithAttributes(
+			attribute.String("messaging.system", "nats"),
+			attribute.String("messaging.operation.name", "send"),
+			attribute.String("messaging.destination.name", subject),
+			attribute.Int("messaging.message.body.size", len(payload)),
 			attribute.String("message.content", req.Text),
-			attribute.String("nats.subject", "messages.new"),
 			attribute.String("nats.api", "jetstream.Publisher"),
 		),
 	)
 	defer span.End()
 
-	_, err := jsNew.Publish(ctx, "messages.new", []byte(req.Text))
+	_, err := jsNew.Publish(ctx, subject, payload)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)

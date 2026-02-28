@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type CSSProperties, type KeyboardEvent } from 'react'
-import { context, propagation, trace, SpanStatusCode } from '@opentelemetry/api'
+import { context, propagation, trace, SpanStatusCode, SpanKind } from '@opentelemetry/api'
 import { tracer } from './tracing'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8081'
@@ -39,8 +39,14 @@ export default function App() {
     const text = inputText.trim()
     if (!text) return
 
+    const url = `${API_URL}${endpoint}`
     const span = tracer.startSpan(spanName, {
-      attributes: { 'message.content': text },
+      kind: SpanKind.CLIENT,
+      attributes: {
+        'message.content': text,
+        'http.request.method': 'POST',
+        'url.full': url,
+      },
     })
     const ctx = trace.setSpan(context.active(), span)
 
@@ -48,11 +54,12 @@ export default function App() {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       propagation.inject(ctx, headers)
 
-      const res = await fetch(`${API_URL}${endpoint}`, {
+      const res = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify({ text }),
       })
+      span.setAttribute('http.response.status_code', res.status)
       if (!res.ok) throw new Error('Failed to send')
       span.setStatus({ code: SpanStatusCode.OK })
       setInputText('')
