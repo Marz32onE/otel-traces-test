@@ -31,7 +31,7 @@ export default function App() {
     }
     ws.onerror = () => setWsStatus('Error')
     ws.onmessage = (event: MessageEvent) => {
-      setMessages((prev) => [...prev, event.data as string])
+      setMessages((prev: string[]) => [...prev, event.data as string])
     }
   }
 
@@ -87,7 +87,7 @@ export default function App() {
           type="text"
           placeholder="Enter a message..."
           value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
         />
       </div>
@@ -105,6 +105,13 @@ export default function App() {
           title="jetstream 套件 Publisher 介面"
         >
           送出（jetstream 套件 Publisher）
+        </button>
+        <button
+          style={{ ...styles.button, ...styles.buttonTertiary }}
+          onClick={() => sendToEndpoint('/api/message-core', 'send-message-core')}
+          title="Core NATS nc.Publish（非 JetStream）"
+        >
+          送出（Core NATS）
         </button>
       </div>
       <textarea
@@ -146,6 +153,9 @@ const styles: Record<string, CSSProperties> = {
   },
   buttonSecondary: {
     backgroundColor: '#0d9488',
+  },
+  buttonTertiary: {
+    backgroundColor: '#b45309',
   },
   textarea: {
     width: '100%',

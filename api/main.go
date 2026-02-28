@@ -23,6 +23,7 @@ import (
 )
 
 var (
+	ncConn  *nats.Conn
 	jsCtx   nats.JetStreamContext
 	jsNew   jetstream.JetStream
 	tracer  trace.Tracer
@@ -96,6 +97,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
+	ncConn = nc
 	defer nc.Close()
 
 	jsCtx, err = nc.JetStream()
@@ -137,6 +139,7 @@ func main() {
 
 	r.POST("/api/message", handleMessage)
 	r.POST("/api/message-v2", handleMessageV2)
+	r.POST("/api/message-core", handleMessageCore)
 
 	log.Println("API server starting on :8081")
 	if err := r.Run(":8081"); err != nil {
@@ -148,6 +151,10 @@ type MessageRequest struct {
 	Text string `json:"text" binding:"required"`
 }
 
+// Tracing: otelgin.Middleware creates the HTTP span (e.g. "POST /api/message"). Handlers add a child
+// "send <subject>" span with SpanKindProducer and messaging.* attributes so the trace shows both
+// transport (HTTP) and domain (NATS publish). Keeping both is intentional: Gin gives route/status,
+// handler gives subject, payload size, and nats.api (core vs jetstream).
 func handleMessage(c *gin.Context) {
 	var req MessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -208,6 +215,43 @@ func handleMessageV2(c *gin.Context) {
 	defer span.End()
 
 	_, err := jsNew.Publish(ctx, subject, payload)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
+		return
+	}
+
+	span.SetStatus(codes.Ok, "")
+	c.JSON(http.StatusOK, gin.H{"status": "published"})
+}
+
+// handleMessageCore publishes using core NATS (nc.Publish), not JetStream.
+// Uses subject "messages.core" so the worker's core subscriber is the only one that receives it (avoids duplicate display with JetStream).
+func handleMessageCore(c *gin.Context) {
+	var req MessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+	subject := "messages.core"
+	payload := []byte(req.Text)
+	_, span := tracer.Start(ctx, "send "+subject,
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "nats"),
+			attribute.String("messaging.operation.name", "send"),
+			attribute.String("messaging.destination.name", subject),
+			attribute.Int("messaging.message.body.size", len(payload)),
+			attribute.String("message.content", req.Text),
+			attribute.String("nats.api", "core"),
+		),
+	)
+	defer span.End()
+
+	err := ncConn.Publish(subject, payload)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)

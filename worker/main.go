@@ -97,7 +97,7 @@ func main() {
 		log.Printf("Stream creation warning: %v", err)
 	}
 
-	// Subscribe to NATS JetStream
+	// Subscribe to NATS JetStream (messages from /api/message and /api/message-v2)
 	_, err = js.Subscribe("messages.new", func(msg *nats.Msg) {
 		log.Printf("Received NATS message: %s", string(msg.Data))
 		broadcast(msg.Data)
@@ -105,6 +105,15 @@ func main() {
 	}, nats.DeliverNew())
 	if err != nil {
 		log.Fatalf("Failed to subscribe: %v", err)
+	}
+
+	// Subscribe to core NATS only on "messages.core" (from /api/message-core). Do not use "messages.new" here or JetStream publishes would be received twice (JS + core) and duplicate in UI.
+	_, err = nc.Subscribe("messages.core", func(msg *nats.Msg) {
+		log.Printf("Received core NATS message: %s", string(msg.Data))
+		broadcast(msg.Data)
+	})
+	if err != nil {
+		log.Fatalf("Failed to subscribe (core): %v", err)
 	}
 
 	http.HandleFunc("/ws", wsHandler)
