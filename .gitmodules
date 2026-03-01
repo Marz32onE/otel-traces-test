@@ -1,3 +1,7 @@
 [submodule "pkg/nats.go"]
 	path = pkg/nats.go
-	url = git@github.com:Marz32onE/nats.go.git
+	url = https://github.com/nats-io/nats.go.git
+	branch = main
+[submodule "pkg/nats.trace.go"]
+	path = pkg/nats.trace.go
+	url = git@github.com:Marz32onE/nats.trace.go.git
