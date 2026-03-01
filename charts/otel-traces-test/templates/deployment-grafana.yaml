@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-grafana
+  labels:
+    app: grafana
+spec:
+  replicas: {{ .Values.grafana.replicaCount }}
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: "{{ .Values.grafana.image.repository }}:{{ .Values.grafana.image.tag }}"
+          imagePullPolicy: {{ .Values.grafana.image.pullPolicy }}
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: {{ .Values.grafana.env.GF_AUTH_ANONYMOUS_ENABLED | quote }}
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: {{ .Values.grafana.env.GF_AUTH_ANONYMOUS_ORG_ROLE | quote }}
+            - name: GF_AUTH_DISABLE_LOGIN_FORM
+              value: {{ .Values.grafana.env.GF_AUTH_DISABLE_LOGIN_FORM | quote }}
+          volumeMounts:
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources
+      volumes:
+        - name: provisioning
+          configMap:
+            name: {{ .Release.Name }}-grafana-datasources

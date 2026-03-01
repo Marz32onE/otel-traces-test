@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-nats
+  labels:
+    app: nats
+spec:
+  type: NodePort
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+      nodePort: {{ .Values.nodePorts.natsClient }}
+    - name: monitoring
+      port: 8222
+      targetPort: 8222
+      nodePort: {{ .Values.nodePorts.natsMonitoring }}
+  selector:
+    app: nats

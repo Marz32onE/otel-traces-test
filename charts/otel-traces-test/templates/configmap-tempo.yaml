@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-tempo-config
+  labels:
+    app.kubernetes.io/component: tempo
+data:
+  tempo.yaml: |
+{{ .Files.Get "config/tempo.yaml" | indent 4 }}

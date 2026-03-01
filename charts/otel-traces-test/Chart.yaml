@@ -1,0 +1,12 @@
+apiVersion: v2
+name: otel-traces-test
+description: OpenTelemetry traces demo - frontend, API, worker, NATS, Tempo, Grafana, OTel Collector
+type: application
+version: 0.1.0
+appVersion: "0.0.1"
+keywords:
+  - opentelemetry
+  - tracing
+  - nats
+  - tempo
+  - grafana

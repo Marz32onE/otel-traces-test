@@ -1,0 +1,77 @@
+# Tempo and OTel Collector config are in charts/otel-traces-test/config/ (shared with docker-compose).
+# Image names for api/worker/frontend: build locally and load into Kind (make kind-build), or push to registry.
+api:
+  image:
+    # localhost/ prefix for images loaded via podman save + kind load image-archive (or docker)
+    repository: localhost/otel-traces-test-api
+    tag: latest
+    pullPolicy: Never
+  replicaCount: 1
+  env:
+    NATS_URL: "nats://nats:4222"
+    OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+
+worker:
+  image:
+    repository: localhost/otel-traces-test-worker
+    tag: latest
+    pullPolicy: Never
+  replicaCount: 1
+  env:
+    NATS_URL: "nats://nats:4222"
+    OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+
+frontend:
+  image:
+    repository: localhost/otel-traces-test-frontend
+    tag: latest
+    pullPolicy: Never
+  replicaCount: 1
+  # Build args for frontend (browser reaches host ports when using Kind NodePort)
+  viteApiUrl: "http://localhost:8081"
+  viteWsUrl: "ws://localhost:8082"
+  viteOtelCollectorUrl: "http://localhost:4318"
+
+nats:
+  image:
+    repository: nats
+    tag: alpine
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+
+tempo:
+  image:
+    repository: grafana/tempo
+    tag: "2.9.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+
+otelCollector:
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+
+grafana:
+  image:
+    repository: grafana/grafana
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  env:
+    GF_AUTH_ANONYMOUS_ENABLED: "true"
+    GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    GF_AUTH_DISABLE_LOGIN_FORM: "true"
+
+# NodePort values (must be in Kubernetes range 30000-32767)
+nodePorts:
+  api: 30081
+  worker: 30082
+  frontend: 30300
+  grafana: 30301
+  tempo: 32000
+  otelCollectorGrpc: 30317
+  otelCollectorHttp: 30318
+  natsClient: 30222
+  natsMonitoring: 30223

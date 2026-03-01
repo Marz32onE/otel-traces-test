@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-otel-collector-config
+  labels:
+    app.kubernetes.io/component: otel-collector
+data:
+  config.yaml: |
+{{ .Files.Get "config/otel-collector.yaml" | replace "tempo:4317" (printf "%s-tempo:4317" .Release.Name) | indent 4 }}

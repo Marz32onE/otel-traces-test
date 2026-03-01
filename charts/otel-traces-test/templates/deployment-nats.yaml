@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-nats
+  labels:
+    app: nats
+spec:
+  replicas: {{ .Values.nats.replicaCount }}
+  selector:
+    matchLabels:
+      app: nats
+  template:
+    metadata:
+      labels:
+        app: nats
+    spec:
+      containers:
+        - name: nats
+          image: "{{ .Values.nats.image.repository }}:{{ .Values.nats.image.tag }}"
+          imagePullPolicy: {{ .Values.nats.image.pullPolicy }}
+          args: ["-js", "-sd", "/data", "-m", "8222"]
+          ports:
+            - containerPort: 4222
+            - containerPort: 8222
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          emptyDir: {}

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-worker
+  labels:
+    app: worker
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+      nodePort: {{ .Values.nodePorts.worker }}
+  selector:
+    app: worker

@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    app: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          ports:
+            - containerPort: 8081
+          env:
+            - name: NATS_URL
+              value: "nats://{{ .Release.Name }}-nats:4222"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "{{ .Release.Name }}-otel-collector:4317"
