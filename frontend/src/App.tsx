@@ -31,7 +31,35 @@ export default function App() {
     }
     ws.onerror = () => setWsStatus('Error')
     ws.onmessage = (event: MessageEvent) => {
-      setMessages((prev: string[]) => [...prev, event.data as string])
+      const data = typeof event.data === 'string' ? event.data : ''
+      let body = data
+      let ctx = context.active()
+
+      try {
+        const parsed = JSON.parse(data) as { traceparent?: string; tracestate?: string; body?: string }
+        if (parsed.traceparent && parsed.body !== undefined) {
+          body = parsed.body
+          const carrier: Record<string, string> = {}
+          if (parsed.traceparent) carrier.traceparent = parsed.traceparent
+          if (parsed.tracestate) carrier.tracestate = parsed.tracestate
+          ctx = propagation.extract(ctx, carrier)
+        }
+      } catch {
+        /* plain text message, no trace */
+      }
+
+      context.with(ctx, () => {
+        const span = tracer.startSpan('receive message', {
+          kind: SpanKind.CONSUMER,
+          attributes: {
+            'message.content': body,
+            'messaging.operation': 'receive',
+          },
+        })
+        span.setStatus({ code: SpanStatusCode.OK })
+        span.end()
+      })
+      setMessages((prev: string[]) => [...prev, body])
     }
   }
 

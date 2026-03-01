@@ -9,25 +9,19 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/nats-io/nats.go"
+	natstrace "github.com/Marz32onE/nats.trace.go"
+	nats "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/trace"
 )
 
-var (
-	ncConn  *nats.Conn
-	jsCtx   nats.JetStreamContext
-	jsNew   jetstream.JetStream
-	tracer  trace.Tracer
-)
+var natsConn *natstrace.Conn
 
 func initTracer() func() {
 	ctx := context.Background()
@@ -66,8 +60,6 @@ func initTracer() func() {
 		propagation.Baggage{},
 	))
 
-	tracer = tp.Tracer("api")
-
 	return func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -84,10 +76,14 @@ func main() {
 		natsURL = nats.DefaultURL
 	}
 
-	var nc *nats.Conn
+	prop := otel.GetTextMapPropagator()
+	tp := otel.GetTracerProvider()
 	var err error
 	for i := 0; i < 10; i++ {
-		nc, err = nats.Connect(natsURL)
+		natsConn, err = natstrace.Connect(natsURL, nil,
+			natstrace.WithTracerProvider(tp),
+			natstrace.WithPropagator(prop),
+		)
 		if err == nil {
 			break
 		}
@@ -97,33 +93,26 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
-	ncConn = nc
-	defer nc.Close()
+	defer natsConn.Close()
 
-	jsCtx, err = nc.JetStream()
+	nc := natsConn.NatsConn()
+	js, err := nc.JetStream()
 	if err != nil {
 		log.Fatalf("Failed to get JetStream context: %v", err)
 	}
-
-	_, err = jsCtx.AddStream(&nats.StreamConfig{
+	_, err = js.AddStream(&nats.StreamConfig{
 		Name:     "MESSAGES",
 		Subjects: []string{"messages.>"},
 	})
 	if err != nil && err != nats.ErrStreamNameAlreadyInUse {
 		log.Printf("Stream creation warning: %v", err)
 	}
-
-	jsNew, err = jetstream.New(nc)
-	if err != nil {
-		log.Fatalf("Failed to create jetstream.JetStream: %v", err)
-	}
-	ctx := context.Background()
-	_, err = jsNew.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:     "MESSAGES",
-		Subjects: []string{"messages.>"},
-	})
-	if err != nil {
-		log.Printf("JetStream CreateOrUpdateStream warning: %v", err)
+	jsNew, err := jetstream.New(nc)
+	if err == nil {
+		_, _ = jsNew.CreateOrUpdateStream(context.Background(), jetstream.StreamConfig{
+			Name:     "MESSAGES",
+			Subjects: []string{"messages.>"},
+		})
 	}
 
 	r := gin.Default()
@@ -151,114 +140,44 @@ type MessageRequest struct {
 	Text string `json:"text" binding:"required"`
 }
 
-// Tracing: otelgin.Middleware creates the HTTP span (e.g. "POST /api/message"). Handlers add a child
-// "send <subject>" span with SpanKindProducer and messaging.* attributes so the trace shows both
-// transport (HTTP) and domain (NATS publish). Keeping both is intentional: Gin gives route/status,
-// handler gives subject, payload size, and nats.api (core vs jetstream).
 func handleMessage(c *gin.Context) {
 	var req MessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	ctx := c.Request.Context()
-	subject := "messages.new"
-	payload := []byte(req.Text)
-	_, span := tracer.Start(ctx, "send "+subject,
-		trace.WithSpanKind(trace.SpanKindProducer),
-		trace.WithAttributes(
-			attribute.String("messaging.system", "nats"),
-			attribute.String("messaging.operation.name", "send"),
-			attribute.String("messaging.destination.name", subject),
-			attribute.Int("messaging.message.body.size", len(payload)),
-			attribute.String("message.content", req.Text),
-		),
-	)
-	defer span.End()
-
-	_, err := jsCtx.Publish(subject, payload)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+	if err := natsConn.PublishJetStream(ctx, "messages.new", []byte(req.Text)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
 		return
 	}
-
-	span.SetStatus(codes.Ok, "")
 	c.JSON(http.StatusOK, gin.H{"status": "published"})
 }
 
-// handleMessageV2 publishes to NATS using jetstream package (Publisher interface).
-// Same behaviour as handleMessage; only the NATS client API differs.
 func handleMessageV2(c *gin.Context) {
 	var req MessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	ctx := c.Request.Context()
-	subject := "messages.new"
-	payload := []byte(req.Text)
-	_, span := tracer.Start(ctx, "send "+subject,
-		trace.WithSpanKind(trace.SpanKindProducer),
-		trace.WithAttributes(
-			attribute.String("messaging.system", "nats"),
-			attribute.String("messaging.operation.name", "send"),
-			attribute.String("messaging.destination.name", subject),
-			attribute.Int("messaging.message.body.size", len(payload)),
-			attribute.String("message.content", req.Text),
-			attribute.String("nats.api", "jetstream.Publisher"),
-		),
-	)
-	defer span.End()
-
-	_, err := jsNew.Publish(ctx, subject, payload)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+	if err := natsConn.PublishJetStream(ctx, "messages.new", []byte(req.Text)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
 		return
 	}
-
-	span.SetStatus(codes.Ok, "")
 	c.JSON(http.StatusOK, gin.H{"status": "published"})
 }
 
-// handleMessageCore publishes using core NATS (nc.Publish), not JetStream.
-// Uses subject "messages.core" so the worker's core subscriber is the only one that receives it (avoids duplicate display with JetStream).
 func handleMessageCore(c *gin.Context) {
 	var req MessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	ctx := c.Request.Context()
-	subject := "messages.core"
-	payload := []byte(req.Text)
-	_, span := tracer.Start(ctx, "send "+subject,
-		trace.WithSpanKind(trace.SpanKindProducer),
-		trace.WithAttributes(
-			attribute.String("messaging.system", "nats"),
-			attribute.String("messaging.operation.name", "send"),
-			attribute.String("messaging.destination.name", subject),
-			attribute.Int("messaging.message.body.size", len(payload)),
-			attribute.String("message.content", req.Text),
-			attribute.String("nats.api", "core"),
-		),
-	)
-	defer span.End()
-
-	err := ncConn.Publish(subject, payload)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+	if err := natsConn.Publish(ctx, "messages.core", []byte(req.Text)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
 		return
 	}
-
-	span.SetStatus(codes.Ok, "")
 	c.JSON(http.StatusOK, gin.H{"status": "published"})
 }
