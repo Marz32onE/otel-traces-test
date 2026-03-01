@@ -3,7 +3,7 @@ module github.com/Marz32onE/otel-traces-test/api
 go 1.24.13
 
 require (
-	github.com/Marz32onE/nats.trace.go v0.1.0
+	github.com/Marz32onE/nats.trace.go v0.1.1
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-gonic/gin v1.11.0
 	github.com/nats-io/nats.go v1.49.0
