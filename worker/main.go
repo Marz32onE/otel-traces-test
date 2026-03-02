@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Marz32onE/natstrace/jetstreamtrace"
+	natstrace "github.com/Marz32onE/natstrace/natstrace"
 	"github.com/gorilla/websocket"
-	"github.com/Marz32onE/nats.trace.go/jetstreamtrace"
-	natstrace "github.com/Marz32onE/nats.trace.go/natstrace"
 	nats "github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -156,7 +156,7 @@ func main() {
 		log.Printf("Stream creation warning: %v", err)
 	}
 
-	// 1) JetStream Consume (callback) — 消費者區分由 nats.trace.go 的 messaging.consumer.name 表示 (worker-consume)
+	// 1) JetStream Consume (callback) — 消費者區分由 natstrace 的 messaging.consumer.name 表示 (worker-consume)
 	consConsume, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
 		Durable:       "worker-consume",
 		FilterSubject: "messages.new",

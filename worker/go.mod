@@ -3,7 +3,7 @@ module github.com/Marz32onE/otel-traces-test/worker
 go 1.24.13
 
 require (
-	github.com/Marz32onE/nats.trace.go v0.1.2
+	github.com/Marz32onE/natstrace v0.1.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.49.0
 	go.opentelemetry.io/otel v1.40.0

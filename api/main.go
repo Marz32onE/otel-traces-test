@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/Marz32onE/natstrace/jetstreamtrace"
+	natstrace "github.com/Marz32onE/natstrace/natstrace"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/Marz32onE/nats.trace.go/jetstreamtrace"
-	natstrace "github.com/Marz32onE/nats.trace.go/natstrace"
 	nats "github.com/nats-io/nats.go"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
@@ -123,7 +123,7 @@ func main() {
 	}))
 	r.Use(otelgin.Middleware("api"))
 
-	r.POST("/api/message", handleMessage)       // JetStream (nats.trace.go)
+	r.POST("/api/message", handleMessage)       // JetStream (natstrace)
 	r.POST("/api/message-core", handleMessageCore) // Core NATS fire-and-go
 
 	log.Println("API server starting on :8081")

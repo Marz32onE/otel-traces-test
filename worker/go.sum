@@ -1,5 +1,5 @@
-github.com/Marz32onE/nats.trace.go v0.1.2 h1:fmrgc7O55v8988Pk9ptHilnKId9QGpWry8sapCkj9aA=
-github.com/Marz32onE/nats.trace.go v0.1.2/go.mod h1:WGK/XETfOCXMgWR8sI3e7Mx0lKWoMSzZvo+jdwwSFnE=
+github.com/Marz32onE/natstrace v0.1.2 h1:fmrgc7O55v8988Pk9ptHilnKId9QGpWry8sapCkj9aA=
+github.com/Marz32onE/natstrace v0.1.2/go.mod h1:WGK/XETfOCXMgWR8sI3e7Mx0lKWoMSzZvo+jdwwSFnE=
 github.com/antithesishq/antithesis-sdk-go v0.5.0-default-no-op h1:Ucf+QxEKMbPogRO5guBNe5cgd9uZgfoJLOYs8WWhtjM=
 github.com/antithesishq/antithesis-sdk-go v0.5.0-default-no-op/go.mod h1:IUpT2DPAKh6i/YhSbt6Gl3v2yvUZjmKncl7U91fup7E=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
