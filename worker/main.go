@@ -201,7 +201,33 @@ func main() {
 		}
 	}()
 
-	// 3) Core NATS (fire-and-go)
+	// 3) JetStream Fetch (single-fetch batch, trace per message)
+	consFetch, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
+		Durable:       "worker-fetch",
+		FilterSubject: "messages.new",
+		AckPolicy:     jetstreamtrace.AckExplicitPolicy,
+	})
+	if err != nil {
+		log.Fatalf("CreateOrUpdateConsumer(worker-fetch): %v", err)
+	}
+	go func() {
+		for {
+			batch, err := consFetch.Fetch(5)
+			if err != nil {
+				continue
+			}
+			for m := range batch.MessagesWithContext() {
+				log.Printf("[Fetch] received: %s", string(m.Msg.Data()))
+				broadcastWithTrace(m.Ctx, m.Msg.Data(), "Fetch")
+				_ = m.Msg.Ack()
+			}
+			if batch.Error() != nil {
+				log.Printf("[Fetch] batch error: %v", batch.Error())
+			}
+		}
+	}()
+
+	// 4) Core NATS (fire-and-go)
 	_, err = natsConn.Subscribe("messages.core", func(ctx context.Context, msg *nats.Msg) {
 		log.Printf("Received core NATS message: %s", string(msg.Data))
 		broadcastWithTrace(ctx, msg.Data, "Core")

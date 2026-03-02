@@ -14,6 +14,8 @@ require (
 	go.opentelemetry.io/otel/trace v1.40.0
 )
 
+replace github.com/Marz32onE/natstrace => ../pkg/natstrace
+
 require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect

@@ -1,5 +1,6 @@
 FROM golang:1.24-alpine AS builder
 WORKDIR /app
+COPY pkg/natstrace ./pkg/natstrace/
 COPY api/go.mod api/go.sum ./api/
 RUN cd api && go mod download
 COPY api/ ./api/
