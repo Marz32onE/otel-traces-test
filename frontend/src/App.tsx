@@ -5,10 +5,13 @@ import { tracer } from './tracing'
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8081'
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8082'
 
+type LastTrace = { traceId: string; endpoint: string } | null
+
 export default function App() {
   const [inputText, setInputText] = useState('')
   const [messages, setMessages] = useState<string[]>([])
   const [wsStatus, setWsStatus] = useState('Connecting...')
+  const [lastTrace, setLastTrace] = useState<LastTrace>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -35,10 +38,12 @@ export default function App() {
       let body = data
       let ctx = context.active()
 
+      let displayText = body
       try {
-        const parsed = JSON.parse(data) as { traceparent?: string; tracestate?: string; body?: string }
+        const parsed = JSON.parse(data) as { traceparent?: string; tracestate?: string; body?: string; api?: string }
         if (parsed.traceparent && parsed.body !== undefined) {
           body = parsed.body
+          displayText = parsed.api ? `${parsed.body} [${parsed.api}]` : parsed.body
           const carrier: Record<string, string> = {}
           if (parsed.traceparent) carrier.traceparent = parsed.traceparent
           if (parsed.tracestate) carrier.tracestate = parsed.tracestate
@@ -59,7 +64,7 @@ export default function App() {
         span.setStatus({ code: SpanStatusCode.OK })
         span.end()
       })
-      setMessages((prev: string[]) => [...prev, body])
+      setMessages((prev: string[]) => [...prev, displayText])
     }
   }
 
@@ -91,6 +96,14 @@ export default function App() {
       if (!res.ok) throw new Error('Failed to send')
       span.setStatus({ code: SpanStatusCode.OK })
       setInputText('')
+      try {
+        const data = await res.json() as { trace_id?: string; endpoint?: string }
+        if (data.trace_id) {
+          setLastTrace({ traceId: data.trace_id, endpoint: data.endpoint ?? endpoint })
+        }
+      } catch {
+        /* ignore */
+      }
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err))
       span.setStatus({ code: SpanStatusCode.ERROR, message: error.message })
@@ -102,7 +115,7 @@ export default function App() {
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') sendToEndpoint('/api/message', 'send-message')
+    if (e.key === 'Enter') sendToEndpoint('/api/message', 'send-message-jetstream')
   }
 
   return (
@@ -122,26 +135,28 @@ export default function App() {
       <div style={styles.buttonRow}>
         <button
           style={styles.button}
-          onClick={() => sendToEndpoint('/api/message', 'send-message')}
-          title="nats.JetStreamContext (內建)"
+          onClick={() => sendToEndpoint('/api/message', 'send-message-jetstream')}
+          title="JetStream（nats.trace.go 包裝 jetstream pkg）"
         >
-          送出（nats 內建 JetStreamContext）
+          送出（JetStream）
         </button>
         <button
           style={{ ...styles.button, ...styles.buttonSecondary }}
-          onClick={() => sendToEndpoint('/api/message-v2', 'send-message-v2')}
-          title="jetstream 套件 Publisher 介面"
-        >
-          送出（jetstream 套件 Publisher）
-        </button>
-        <button
-          style={{ ...styles.button, ...styles.buttonTertiary }}
           onClick={() => sendToEndpoint('/api/message-core', 'send-message-core')}
-          title="Core NATS nc.Publish（非 JetStream）"
+          title="Core NATS fire-and-go"
         >
-          送出（Core NATS）
+          送出（Core NATS fire-and-go）
         </button>
       </div>
+      {lastTrace && (
+        <div style={styles.traceVerify}>
+          <strong>Trace 驗證（{lastTrace.endpoint}）</strong>
+          <br />
+          <code style={styles.traceId} title="在 Grafana/Tempo 用此 Trace ID 查詢，可看到 Frontend → API → Producer → Worker Consumer → WS 串聯">
+            {lastTrace.traceId}
+          </code>
+        </div>
+      )}
       <textarea
         style={styles.textarea}
         readOnly
@@ -161,6 +176,15 @@ const styles: Record<string, CSSProperties> = {
   },
   title: { marginBottom: '8px' },
   status: { marginBottom: '16px', color: '#555' },
+  traceVerify: {
+    marginBottom: '12px',
+    padding: '8px 12px',
+    fontSize: '13px',
+    background: '#f5f5f5',
+    borderRadius: '4px',
+    wordBreak: 'break-all' as const,
+  },
+  traceId: { fontSize: '12px', userSelect: 'all' as const },
   inputRow: { display: 'flex', gap: '8px', marginBottom: '8px' },
   buttonRow: { display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' as const },
   input: {

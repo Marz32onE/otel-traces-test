@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	natstrace "github.com/Marz32onE/nats.trace.go"
+	"github.com/Marz32onE/nats.trace.go/jetstreamtrace"
+	natstrace "github.com/Marz32onE/nats.trace.go/natstrace"
 	nats "github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -19,9 +19,13 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
-var natsConn *natstrace.Conn
+var (
+	natsConn    *natstrace.Conn
+	jetstreamJS jetstreamtrace.JetStream
+)
 
 func initTracer() func() {
 	ctx := context.Background()
@@ -95,25 +99,18 @@ func main() {
 	}
 	defer natsConn.Close()
 
-	nc := natsConn.NatsConn()
-	js, err := nc.JetStream()
+	js, err := jetstreamtrace.New(natsConn)
 	if err != nil {
-		log.Fatalf("Failed to get JetStream context: %v", err)
+		log.Fatalf("JetStream: %v", err)
 	}
-	_, err = js.AddStream(&nats.StreamConfig{
+	_, err = js.CreateOrUpdateStream(context.Background(), jetstreamtrace.StreamConfig{
 		Name:     "MESSAGES",
 		Subjects: []string{"messages.>"},
 	})
-	if err != nil && err != nats.ErrStreamNameAlreadyInUse {
+	if err != nil {
 		log.Printf("Stream creation warning: %v", err)
 	}
-	jsNew, err := jetstream.New(nc)
-	if err == nil {
-		_, _ = jsNew.CreateOrUpdateStream(context.Background(), jetstream.StreamConfig{
-			Name:     "MESSAGES",
-			Subjects: []string{"messages.>"},
-		})
-	}
+	jetstreamJS = js
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
@@ -126,9 +123,8 @@ func main() {
 	}))
 	r.Use(otelgin.Middleware("api"))
 
-	r.POST("/api/message", handleMessage)
-	r.POST("/api/message-v2", handleMessageV2)
-	r.POST("/api/message-core", handleMessageCore)
+	r.POST("/api/message", handleMessage)       // JetStream (nats.trace.go)
+	r.POST("/api/message-core", handleMessageCore) // Core NATS fire-and-go
 
 	log.Println("API server starting on :8081")
 	if err := r.Run(":8081"); err != nil {
@@ -140,6 +136,13 @@ type MessageRequest struct {
 	Text string `json:"text" binding:"required"`
 }
 
+func getTraceIDFromContext(ctx context.Context) string {
+	if span := trace.SpanFromContext(ctx); span.SpanContext().HasTraceID() {
+		return span.SpanContext().TraceID().String()
+	}
+	return ""
+}
+
 func handleMessage(c *gin.Context) {
 	var req MessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -147,25 +150,15 @@ func handleMessage(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	if err := natsConn.PublishJetStream(ctx, "messages.new", []byte(req.Text)); err != nil {
+	if _, err := jetstreamJS.Publish(ctx, "messages.new", []byte(req.Text)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "published"})
-}
-
-func handleMessageV2(c *gin.Context) {
-	var req MessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	ctx := c.Request.Context()
-	if err := natsConn.PublishJetStream(ctx, "messages.new", []byte(req.Text)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "published"})
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "published",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "JetStream",
+	})
 }
 
 func handleMessageCore(c *gin.Context) {
@@ -179,5 +172,9 @@ func handleMessageCore(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "published"})
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "published",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "Core",
+	})
 }

@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	natstrace "github.com/Marz32onE/nats.trace.go"
+	"github.com/Marz32onE/nats.trace.go/jetstreamtrace"
+	natstrace "github.com/Marz32onE/nats.trace.go/natstrace"
 	nats "github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -28,20 +29,22 @@ var (
 	clientsMu sync.Mutex
 )
 
-// wsPayload is sent over WebSocket so the frontend can extract trace context and complete the trace.
+// wsPayload is sent over WebSocket so the frontend can extract trace context and show which consumer delivered the message.
 type wsPayload struct {
 	Traceparent string `json:"traceparent"`
 	Tracestate  string `json:"tracestate,omitempty"`
 	Body        string `json:"body"`
+	Api         string `json:"api,omitempty"` // consumer type postfix for verification, e.g. "Consume", "Messages"
 }
 
-func broadcastWithTrace(ctx context.Context, body []byte) {
+func broadcastWithTrace(ctx context.Context, body []byte, apiName string) {
 	carrier := make(map[string]string)
 	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(carrier))
 	payload := wsPayload{
 		Traceparent: carrier["traceparent"],
 		Tracestate:  carrier["tracestate"],
 		Body:        string(body),
+		Api:         apiName,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -141,31 +144,67 @@ func main() {
 	}
 	defer natsConn.Close()
 
-	nc := natsConn.NatsConn()
-	js, err := nc.JetStream()
+	js, err := jetstreamtrace.New(natsConn)
 	if err != nil {
 		log.Fatalf("JetStream: %v", err)
 	}
-	_, err = js.AddStream(&nats.StreamConfig{
+	s, err := js.CreateOrUpdateStream(ctx, jetstreamtrace.StreamConfig{
 		Name:     "MESSAGES",
 		Subjects: []string{"messages.>"},
 	})
-	if err != nil && err != nats.ErrStreamNameAlreadyInUse {
+	if err != nil {
 		log.Printf("Stream creation warning: %v", err)
 	}
 
-	_, err = natsConn.SubscribeJetStream("messages.new", func(ctx context.Context, msg *nats.Msg) {
-		log.Printf("Received NATS message: %s", string(msg.Data))
-		broadcastWithTrace(ctx, msg.Data)
+	// 1) JetStream Consume (callback) — 消費者區分由 nats.trace.go 的 messaging.consumer.name 表示 (worker-consume)
+	consConsume, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
+		Durable:       "worker-consume",
+		FilterSubject: "messages.new",
+		AckPolicy:     jetstreamtrace.AckExplicitPolicy,
+	})
+	if err != nil {
+		log.Fatalf("CreateOrUpdateConsumer(worker-consume): %v", err)
+	}
+	cc, err := consConsume.Consume(func(ctx context.Context, msg jetstreamtrace.Msg) {
+		log.Printf("[Consume] received: %s", string(msg.Data()))
+		broadcastWithTrace(ctx, msg.Data(), "Consume")
 		_ = msg.Ack()
 	})
 	if err != nil {
-		log.Fatalf("Subscribe JetStream: %v", err)
+		log.Fatalf("Consume: %v", err)
 	}
+	defer cc.Stop()
 
+	// 2) JetStream Messages() iterator — 消費者區分: messaging.consumer.name = worker-messages；broadcast 後綴驗證用
+	consMessages, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
+		Durable:       "worker-messages",
+		FilterSubject: "messages.new",
+		AckPolicy:     jetstreamtrace.AckExplicitPolicy,
+	})
+	if err != nil {
+		log.Fatalf("CreateOrUpdateConsumer(worker-messages): %v", err)
+	}
+	iter, err := consMessages.Messages()
+	if err != nil {
+		log.Fatalf("Messages: %v", err)
+	}
+	defer iter.Stop()
+	go func() {
+		for {
+			ctx, msg, err := iter.Next()
+			if err != nil {
+				return
+			}
+			log.Printf("[Messages] received: %s", string(msg.Data()))
+			broadcastWithTrace(ctx, msg.Data(), "Messages")
+			_ = msg.Ack()
+		}
+	}()
+
+	// 3) Core NATS (fire-and-go)
 	_, err = natsConn.Subscribe("messages.core", func(ctx context.Context, msg *nats.Msg) {
 		log.Printf("Received core NATS message: %s", string(msg.Data))
-		broadcastWithTrace(ctx, msg.Data)
+		broadcastWithTrace(ctx, msg.Data, "Core")
 	})
 	if err != nil {
 		log.Fatalf("Subscribe core: %v", err)
