@@ -7,7 +7,7 @@
 ## 給首次使用者與 AI Agent 的專案摘要
 
 - **目的**：示範端到端 W3C Trace Context 傳播：瀏覽器 → API（HTTP + NATS 發布）→ Worker（NATS 訂閱 + WebSocket 廣播）→ 瀏覽器（WebSocket 接收並建立最後一段 span）。
-- **技術棧**：React 18 + TypeScript + Vite（前端）、Go + Gin（API）、Go + gorilla/websocket（Worker）、NATS（JetStream + Core）、OpenTelemetry（OTel）SDK、OTel Collector、Grafana Tempo、Grafana。
+- **技術棧**：React 18 + TypeScript + Vite（前端，**Grafana Faro SDK** 負責 trace 與 W3C 傳播）、Go + Gin（API）、Go + gorilla/websocket（Worker）、NATS（JetStream + Core）、OpenTelemetry（OTel）SDK、OTel Collector、Grafana Tempo、Grafana。
 - **兩條路徑**：**JetStream**（`POST /api/message` → `messages.new` → Worker Consume/Messages）與 **Core NATS**（`POST /api/message-core` → `messages.core` → Worker Subscribe）；同一 trace 從 API 貫穿到 Worker，可在 Tempo 依 trace ID 查詢。
 - **Submodule**：`pkg/natstrace`（[natstrace](https://github.com/Marz32onE/natstrace) — NATS 的 OTel 包裝，W3C 傳播 + JetStream/Core）。Clone 後需 `git submodule update --init`。
 - **建置與執行**：Docker Compose 從專案根目錄 build；`api` 與 `worker` 的 build context 為根目錄。使用 `make up` 或 `docker compose up --build`（Makefile 預設為 `podman compose`，可覆寫 `COMPOSE_CMD='docker compose'`）。
@@ -191,7 +191,7 @@ make clean   # 含 -v
 │   └── src/
 │       ├── main.tsx
 │       ├── App.tsx             # 雙按鈕（JetStream / Core）、Trace 驗證顯示 trace_id、WS 解析 traceparent
-│       └── tracing.ts          # OTel 初始化（WebTracerProvider、OTLP HTTP、W3C propagator）
+│       └── tracing.ts          # Grafana Faro 初始化（TracingInstrumentation、OtlpHttpTransport、propagateTraceHeaderCorsUrls）
 ├── pkg/
 │   └── natstrace/              # Git submodule — natstrace（NATS OTel 包裝，W3C + JetStream/Core）
 ├── charts/otel-traces-test/config/   # tempo.yaml、otel-collector.yaml（Compose 掛載）

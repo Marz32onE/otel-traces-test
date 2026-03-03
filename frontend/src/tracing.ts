@@ -1,97 +1,42 @@
-import { WebTracerProvider } from '@opentelemetry/sdk-trace-web'
-import { SimpleSpanProcessor, type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace-base'
-import { resourceFromAttributes } from '@opentelemetry/resources'
-import { W3CTraceContextPropagator, ExportResultCode, type ExportResult, hrTimeToNanoseconds } from '@opentelemetry/core'
-import { trace } from '@opentelemetry/api'
+import { trace } from '@opentelemetry/api';
+import { initializeFaro, getWebInstrumentations } from '@grafana/faro-react';
+import { TracingInstrumentation } from '@grafana/faro-web-tracing';
+import { OtlpHttpTransport } from '@grafana/faro-transport-otlp-http';
 
 const OTEL_COLLECTOR_URL =
-  import.meta.env.VITE_OTEL_COLLECTOR_URL || 'http://localhost:4318'
+  import.meta.env.VITE_OTEL_COLLECTOR_URL || 'http://localhost:4318';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8081';
 
-function toHex(bytes: number[] | Uint8Array | string): string {
-  if (typeof bytes === 'string') return bytes
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-}
-
-// OTLP attribute value by type (semantic convention)
-function attrToOtlpValue(value: unknown): { stringValue?: string; intValue?: string; doubleValue?: number; boolValue?: boolean } {
-  if (typeof value === 'number') {
-    if (Number.isInteger(value)) return { intValue: String(value) }
-    return { doubleValue: value }
+// Allow trace context (traceparent) to be sent to our API (cross-origin when port differs)
+function apiOriginRegex(): RegExp {
+  try {
+    const u = new URL(API_URL);
+    const origin = u.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^${origin}`);
+  } catch {
+    return /localhost:8081/;
   }
-  if (typeof value === 'boolean') return { boolValue: value }
-  return { stringValue: String(value) }
 }
 
-function spansToOtlpJson(spans: ReadableSpan[]) {
-  const resource = spans[0]?.resource
-  const resAttrs = resource
-    ? Object.entries(resource.attributes).map(([key, value]) => ({
-        key,
-        value: attrToOtlpValue(value),
-      }))
-    : []
-
-  return {
-    resourceSpans: [
-      {
-        resource: { attributes: resAttrs },
-        scopeSpans: [
-          {
-            scope: { name: 'frontend' },
-            spans: spans.map((s) => ({
-              traceId: toHex(s.spanContext().traceId),
-              spanId: toHex(s.spanContext().spanId),
-              parentSpanId: s.parentSpanId ? toHex(s.parentSpanId) : undefined,
-              name: s.name,
-              kind: s.kind + 1,
-              startTimeUnixNano: String(hrTimeToNanoseconds(s.startTime)),
-              endTimeUnixNano: String(hrTimeToNanoseconds(s.endTime)),
-              attributes: Object.entries(s.attributes).map(([key, value]) => ({
-                key,
-                value: attrToOtlpValue(value),
-              })),
-              status: { code: s.status.code },
-            })),
-          },
-        ],
+initializeFaro({
+  url: OTEL_COLLECTOR_URL,
+  app: {
+    name: 'frontend',
+    version: '0.0.1',
+  },
+  instrumentations: [
+    ...getWebInstrumentations(),
+    new TracingInstrumentation({
+      instrumentationOptions: {
+        propagateTraceHeaderCorsUrls: [apiOriginRegex()],
       },
-    ],
-  }
-}
+    }),
+  ],
+  transports: [
+    new OtlpHttpTransport({
+      tracesURL: `${OTEL_COLLECTOR_URL}/v1/traces`,
+    }),
+  ],
+});
 
-const fetchExporter: SpanExporter = {
-  export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void) {
-    const body = JSON.stringify(spansToOtlpJson(spans))
-    fetch(`${OTEL_COLLECTOR_URL}/v1/traces`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      keepalive: true,
-    })
-      .then((res) => {
-        resultCallback({
-          code: res.ok ? ExportResultCode.SUCCESS : ExportResultCode.FAILED,
-        })
-      })
-      .catch(() => {
-        resultCallback({ code: ExportResultCode.FAILED })
-      })
-  },
-  shutdown() {
-    return Promise.resolve()
-  },
-}
-
-const provider = new WebTracerProvider({
-  resource: resourceFromAttributes({
-    'service.name': 'frontend',
-    'service.version': '0.0.1',
-  }),
-  spanProcessors: [new SimpleSpanProcessor(fetchExporter)],
-})
-
-provider.register({ propagator: new W3CTraceContextPropagator() })
-
-export const tracer = trace.getTracer('frontend')
+export const tracer = trace.getTracer('frontend');

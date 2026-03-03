@@ -103,16 +103,14 @@ export default function App() {
     const ctx = trace.setSpan(context.active(), span);
 
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      propagation.inject(ctx, headers);
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ text }),
-      });
+      // Faro TracingInstrumentation injects traceparent/tracestate into fetch automatically when run inside this context
+      const res = await context.with(ctx, () =>
+        fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        })
+      );
       span.setAttribute("http.response.status_code", res.status);
       if (!res.ok) throw new Error("Failed to send");
       span.setStatus({ code: SpanStatusCode.OK });
