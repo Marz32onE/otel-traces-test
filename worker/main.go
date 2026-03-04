@@ -236,6 +236,25 @@ func main() {
 		log.Fatalf("Subscribe core: %v", err)
 	}
 
+	// 5) JetStream messages from dbwatcher (MongoDB change stream → messages.db)
+	consDB, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
+		Durable:       "worker-db",
+		FilterSubject: "messages.db",
+		AckPolicy:     jetstreamtrace.AckExplicitPolicy,
+	})
+	if err != nil {
+		log.Fatalf("CreateOrUpdateConsumer(worker-db): %v", err)
+	}
+	ccDB, err := consDB.Consume(func(ctx context.Context, msg jetstreamtrace.Msg) {
+		log.Printf("[DB] received: %s", string(msg.Data()))
+		broadcastWithTrace(ctx, msg.Data(), "DB")
+		_ = msg.Ack()
+	})
+	if err != nil {
+		log.Fatalf("Consume(worker-db): %v", err)
+	}
+	defer ccDB.Stop()
+
 	http.HandleFunc("/ws", wsHandler)
 	log.Println("WebSocket worker starting on :8082")
 	if err := http.ListenAndServe(":8082", nil); err != nil {

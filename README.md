@@ -157,6 +157,28 @@ curl -s "http://localhost:3200/api/traces/<TRACE_ID>" | head -c 500
 
 若要看到 **含前端的完整 trace**，請從瀏覽器 http://localhost:3000 送一則訊息；畫面上會顯示該次請求的 **Trace 驗證** 與 `trace_id`，可複製到 Grafana Explore → Tempo 查詢。
 
+### 驗證完整路徑（含 MongoDB）
+
+專案根目錄提供腳本一次驗證 **Go 建置、Docker 啟動、所有 API 端點、MongoDB 路徑（API → Mongo → dbwatcher → NATS → Worker）、前端與 Tempo trace**：
+
+```bash
+./scripts/verify-full-path.sh
+```
+
+需已安裝 `go`、`docker`、`docker compose`。腳本會：建置 api / worker / dbwatcher、`docker compose up -d --build`、等待服務就緒、對 `/api/message`、`/api/message-core`、`/api/message-mongo` 發送請求、檢查 dbwatcher/worker 日誌是否出現轉發與接收、並以 traceparent 呼叫 `/api/message-mongo` 後查詢 Tempo。
+
+手動驗證 MongoDB 路徑可依序執行：
+
+```bash
+# 寫入 MongoDB（API）
+curl -s -X POST http://localhost:8081/api/message-mongo -H "Content-Type: application/json" -d '{"text":"mongo-e2e"}'
+# 預期: {"endpoint":"MongoDB","status":"stored","trace_id":"..."}
+
+# 數秒後檢查 dbwatcher 是否轉發、worker 是否收到
+docker compose logs dbwatcher --tail 20   # 應見 "Forwarded to messages.db"
+docker compose logs worker --tail 20       # 應見 "[DB] received"
+```
+
 ### 停止與清理
 
 ```bash

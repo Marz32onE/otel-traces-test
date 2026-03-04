@@ -1,6 +1,20 @@
 version: '3.9'
 
 services:
+  mongodb:
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "try { rs.status().ok } catch(e) { rs.initiate().ok }"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+
   nats:
     image: nats:alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
@@ -56,9 +70,12 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+      - MONGODB_URI=mongodb://mongodb:27017
     ports:
       - "8081:8081"
     depends_on:
+      mongodb:
+        condition: service_healthy
       nats:
         condition: service_healthy
       otel-collector:
@@ -81,6 +98,23 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  dbwatcher:
+    build:
+      context: .
+      dockerfile: dbwatcher/Dockerfile
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017
+      - NATS_URL=nats://nats:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
@@ -96,6 +130,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  mongodb_data:
   nats_data:
   tempo_data:
   grafana_data:

@@ -181,6 +181,15 @@ export default function App() {
         >
           送出（Core NATS fire-and-go）
         </button>
+        <button
+          style={{ ...styles.button, ...styles.buttonTertiary }}
+          onClick={() =>
+            sendToEndpoint("/api/message-mongo", "send-message-mongo")
+          }
+          title="經 API 寫入 MongoDB，由 dbwatcher 監聽並轉發至 NATS JetStream"
+        >
+          送出（MongoDB）
+        </button>
       </div>
       {lastTrace && (
         <div style={styles.traceVerify}>
