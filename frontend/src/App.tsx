@@ -14,7 +14,7 @@ import {
 } from "@opentelemetry/api";
 import { tracer } from "./tracing";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8081";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8088";
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8082";
 
 type LastTrace = { traceId: string; endpoint: string } | null;

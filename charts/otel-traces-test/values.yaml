@@ -28,7 +28,7 @@ frontend:
     pullPolicy: Never
   replicaCount: 1
   # Build args for frontend (browser reaches host ports when using Kind NodePort)
-  viteApiUrl: "http://localhost:8081"
+  viteApiUrl: "http://localhost:8088"
   viteWsUrl: "ws://localhost:8082"
   viteOtelCollectorUrl: "http://localhost:4318"
 

@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
-ARG VITE_API_URL=http://localhost:8081
+ARG VITE_API_URL=http://localhost:8088
 ARG VITE_WS_URL=ws://localhost:8082
 ARG VITE_OTEL_COLLECTOR_URL=http://localhost:4318
 ENV VITE_API_URL=$VITE_API_URL

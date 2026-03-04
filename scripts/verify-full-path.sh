@@ -32,13 +32,13 @@ docker compose ps
 echo ""
 echo "=== 5. API health: all endpoints ==="
 # JetStream
-r=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8081/api/message -H "Content-Type: application/json" -d '{"text":"verify-js"}')
+r=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8088/api/message -H "Content-Type: application/json" -d '{"text":"verify-js"}')
 echo "  POST /api/message          -> HTTP $r (expect 200)"
 # Core NATS
-r=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8081/api/message-core -H "Content-Type: application/json" -d '{"text":"verify-core"}')
+r=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8088/api/message-core -H "Content-Type: application/json" -d '{"text":"verify-core"}')
 echo "  POST /api/message-core     -> HTTP $r (expect 200)"
 # MongoDB
-r=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8081/api/message-mongo -H "Content-Type: application/json" -d '{"text":"verify-mongo-path"}')
+r=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8088/api/message-mongo -H "Content-Type: application/json" -d '{"text":"verify-mongo-path"}')
 echo "  POST /api/message-mongo    -> HTTP $r (expect 200)"
 
 if [ "$r" != "200" ]; then
@@ -73,7 +73,7 @@ echo ""
 echo "=== 8. E2E trace (MongoDB path) ==="
 TRACE_ID="deadbeef000000000000000000000003"
 SPAN_ID="1234567890abcdef"
-curl -s -X POST http://localhost:8081/api/message-mongo \
+curl -s -X POST http://localhost:8088/api/message-mongo \
   -H "Content-Type: application/json" \
   -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" \
   -d '{"text":"e2e-trace-mongo"}'

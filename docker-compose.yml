@@ -72,7 +72,7 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
       - MONGODB_URI=mongodb://mongodb:27017
     ports:
-      - "8081:8081"
+      - "8088:8088"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -119,7 +119,7 @@ services:
     build:
       context: ./frontend
       args:
-        - VITE_API_URL=http://localhost:8081
+        - VITE_API_URL=http://localhost:8088
         - VITE_WS_URL=ws://localhost:8082
         - VITE_OTEL_COLLECTOR_URL=http://localhost:4318
     ports:

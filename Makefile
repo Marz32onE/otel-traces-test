@@ -1,5 +1,5 @@
 # Docker Compose command (default: docker compose v2)
-COMPOSE_CMD ?= podman compose
+COMPOSE_CMD ?= docker compose
 
 # Kind: assume cluster already exists (kind create cluster + kubectl + helm)
 KIND_CLUSTER ?= kind
@@ -62,7 +62,7 @@ kind-build:
 	$(DOCKER_CMD) build -t localhost/otel-traces-test-api:latest -f api/Dockerfile .
 	$(DOCKER_CMD) build -t localhost/otel-traces-test-worker:latest -f worker/Dockerfile .
 	$(DOCKER_CMD) build -t localhost/otel-traces-test-frontend:latest \
-		--build-arg VITE_API_URL=http://localhost:8081 \
+		--build-arg VITE_API_URL=http://localhost:8088 \
 		--build-arg VITE_WS_URL=ws://localhost:8082 \
 		--build-arg VITE_OTEL_COLLECTOR_URL=http://localhost:4318 \
 		-f frontend/Dockerfile ./frontend
@@ -86,6 +86,6 @@ kind-down: kind-uninstall
 kind-verify:
 	kubectl wait --for=condition=ready pod -l app=nats -n $(HELM_NAMESPACE) --timeout=120s
 	kubectl wait --for=condition=ready pod -l app=api -n $(HELM_NAMESPACE) --timeout=120s
-	@kubectl port-forward -n $(HELM_NAMESPACE) svc/$(HELM_RELEASE)-api 8081:8081 & PID=$$!; \
-	sleep 3; curl -s -X POST http://localhost:8081/api/message -H "Content-Type: application/json" -d '{"text":"kind-verify"}'; \
+	@kubectl port-forward -n $(HELM_NAMESPACE) svc/$(HELM_RELEASE)-api 8088:8088 & PID=$$!; \
+	sleep 3; curl -s -X POST http://localhost:8088/api/message -H "Content-Type: application/json" -d '{"text":"kind-verify"}'; \
 	kill $$PID 2>/dev/null || true

@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 COPY pkg/natstrace ./pkg/natstrace/
 COPY api/go.mod api/go.sum ./api/
@@ -9,5 +9,5 @@ RUN cd api && go build -o api .
 FROM alpine:3.19
 WORKDIR /app
 COPY --from=builder /app/api/api .
-EXPOSE 8081
+EXPOSE 8088
 CMD ["./api"]

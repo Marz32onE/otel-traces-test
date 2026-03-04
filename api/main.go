@@ -148,12 +148,12 @@ func main() {
 	}))
 	r.Use(otelgin.Middleware("api"))
 
-	r.POST("/api/message", handleMessage)           // JetStream (natstrace)
-	r.POST("/api/message-core", handleMessageCore)  // Core NATS fire-and-go
+	r.POST("/api/message", handleMessage)            // JetStream (natstrace)
+	r.POST("/api/message-core", handleMessageCore)   // Core NATS fire-and-go
 	r.POST("/api/message-mongo", handleMessageMongo) // Store to MongoDB
 
-	log.Println("API server starting on :8081")
-	if err := r.Run(":8081"); err != nil {
+	log.Println("API server starting on :8088")
+	if err := r.Run(":8088"); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }
