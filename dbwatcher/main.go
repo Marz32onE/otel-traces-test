@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/Marz32onE/natstrace/jetstreamtrace"
@@ -39,12 +41,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("OTLP exporter: %v", err)
 	}
-	res, _ := resource.New(ctx,
+	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			attribute.String("service.name", "dbwatcher"),
 			attribute.String("service.version", "0.0.1"),
 		),
 	)
+	if err != nil {
+		log.Fatalf("OTel resource: %v", err)
+	}
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
@@ -66,25 +71,19 @@ func main() {
 		mongoURI = "mongodb://localhost:27017"
 	}
 	monitor := otelmongo.NewMonitor(otelmongo.WithTracerProvider(tp))
-	clientOpts := options.Client().ApplyURI(mongoURI).SetMonitor(monitor)
+	clientOpts := options.Client().
+		ApplyURI(mongoURI).
+		SetMonitor(monitor).
+		SetServerSelectionTimeout(10 * time.Second)
 	mongoClient, err := mongo.Connect(clientOpts)
 	if err != nil {
 		log.Fatalf("MongoDB connect: %v", err)
 	}
 	defer func() {
-		_ = mongoClient.Disconnect(context.Background())
+		disconnectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = mongoClient.Disconnect(disconnectCtx)
 	}()
-
-	for i := 0; i < 15; i++ {
-		if err = mongoClient.Ping(ctx, nil); err == nil {
-			break
-		}
-		log.Printf("MongoDB ping (%d/15): %v", i+1, err)
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		log.Fatalf("MongoDB ping: %v", err)
-	}
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
@@ -123,15 +122,31 @@ func main() {
 	coll := mongoClient.Database(dbName).Collection(collName)
 	// Match only insert events to forward message text to NATS
 	pipeline := mongo.Pipeline{bson.D{{Key: "$match", Value: bson.D{{Key: "operationType", Value: "insert"}}}}}
-	stream, err := coll.Watch(ctx, pipeline)
+
+	// No separate Ping: open Watch with retry. Validates server up + change stream (replica set) in one step.
+	var stream *mongo.ChangeStream
+	for i := 0; i < 15; i++ {
+		tryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		stream, err = coll.Watch(tryCtx, pipeline)
+		cancel()
+		if err == nil {
+			break
+		}
+		log.Printf("MongoDB change stream (%d/15): %v (ensure replica set)", i+1, err)
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		log.Fatalf("Change stream: %v (ensure MongoDB is a replica set)", err)
+		log.Fatalf("MongoDB change stream: %v", err)
 	}
 	defer stream.Close(ctx)
 
+	// Graceful shutdown: cancel on SIGINT/SIGTERM so stream.Next returns and defers run
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	log.Println("dbwatcher: watching MongoDB messages, publishing to NATS JetStream subject", subject)
 	for {
-		if !stream.Next(ctx) {
+		if !stream.Next(sigCtx) {
 			if err := stream.Err(); err != nil {
 				log.Printf("Change stream error: %v", err)
 			}

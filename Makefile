@@ -1,15 +1,41 @@
-# Docker Compose command (default: docker compose v2)
-COMPOSE_CMD ?= docker compose
+# --- Auto-detected (override with make VAR=value) ---
 
-# Kind: assume cluster already exists (kind create cluster + kubectl + helm)
-KIND_CLUSTER ?= kind
+# Compose: docker compose | podman-compose | podman compose
+COMPOSE_CMD ?= $(shell \
+	if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then \
+		echo "docker compose"; \
+	elif command -v podman-compose >/dev/null 2>&1; then \
+		echo "podman-compose"; \
+	elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then \
+		echo "podman compose"; \
+	else \
+		echo "docker compose"; \
+	fi)
+
+# Image builder for kind-build: derive from COMPOSE_CMD (docker or podman)
+DOCKER_CMD ?= $(shell \
+	first=$$(echo $(COMPOSE_CMD) | cut -d' ' -f1); \
+	if [ "$$first" = "podman-compose" ]; then echo podman; else echo $$first; fi)
+
+# Kind cluster name: use single existing cluster, else "kind"
+KIND_CLUSTER ?= $(shell \
+	clusters=$$(kind get clusters 2>/dev/null); \
+	if [ "$$(echo $$clusters | wc -w)" = "1" ] && [ -n "$$clusters" ]; then echo $$clusters; else echo "kind"; fi)
+
+# Helm (project-specific, rarely overridden)
 HELM_RELEASE ?= otel-traces-test
 HELM_NAMESPACE ?= otel
-# Use docker or podman for building images (e.g. DOCKER_CMD=podman)
-DOCKER_CMD ?= docker
 
-.PHONY: up down clean restart build logs ps help
+.PHONY: up down clean restart build logs ps help detect
 .PHONY: kind-build kind-install kind-uninstall kind-verify kind-up kind-down
+
+# Show all auto-detected variables
+detect:
+	@echo "COMPOSE_CMD  = $(COMPOSE_CMD)"
+	@echo "DOCKER_CMD   = $(DOCKER_CMD)"
+	@echo "KIND_CLUSTER = $(KIND_CLUSTER)"
+	@echo "HELM_RELEASE = $(HELM_RELEASE)"
+	@echo "HELM_NAMESPACE = $(HELM_NAMESPACE)"
 
 # Start all services in background (build images if needed)
 up:
@@ -40,18 +66,19 @@ logs:
 
 help:
 	@echo "Usage:"
-	@echo "  make up      - Start all services (docker compose up -d --build)"
-	@echo "  make down    - Stop all services"
-	@echo "  make clean   - Stop and remove containers + volumes"
+	@echo "  make up     - Start all services ($(COMPOSE_CMD) up -d --build)"
+	@echo "  make down   - Stop all services"
+	@echo "  make clean  - Stop and remove containers + volumes"
 	@echo "  make restart - down then up"
-	@echo "  make build   - Build images only"
-	@echo "  make ps      - Show service status"
-	@echo "  make logs    - Follow logs (optional: make logs SVC=api)"
-	@echo "  make help    - This message"
+	@echo "  make build  - Build images only"
+	@echo "  make ps     - Show service status"
+	@echo "  make logs   - Follow logs (optional: make logs SVC=api)"
+	@echo "  make detect - Show auto-detected COMPOSE_CMD, DOCKER_CMD, KIND_CLUSTER"
+	@echo "  make help   - This message"
 	@echo ""
-	@echo "Kind (cluster must exist):"
-	@echo "  make kind-build     - Build api/worker/frontend images and load into kind"
-	@echo "  make kind-install   - Helm upgrade --install $(HELM_RELEASE) charts/otel-traces-test -n $(HELM_NAMESPACE)"
+	@echo "Kind (cluster must exist, KIND_CLUSTER=$(KIND_CLUSTER)):"
+	@echo "  make kind-build     - Build images with $(DOCKER_CMD) and load into kind"
+	@echo "  make kind-install   - Helm upgrade --install $(HELM_RELEASE) ./charts/otel-traces-test -n $(HELM_NAMESPACE)"
 	@echo "  make kind-uninstall - Helm uninstall $(HELM_RELEASE) -n $(HELM_NAMESPACE)"
 	@echo "  make kind-up        - kind-build + kind-install"
 	@echo "  make kind-down      - kind-uninstall"
