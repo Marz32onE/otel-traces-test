@@ -19,11 +19,20 @@ const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8082";
 
 type LastTrace = { traceId: string; endpoint: string } | null;
 
+/** Parse trace ID from W3C traceparent (version-traceId-spanId-flags). */
+function traceIdFromTraceparent(traceparent: string): string | null {
+  const parts = traceparent.trim().split("-");
+  return parts.length >= 2 ? parts[1] ?? null : null;
+}
+
 export default function App() {
   const [inputText, setInputText] = useState("");
   const [messages, setMessages] = useState<string[]>([]);
   const [wsStatus, setWsStatus] = useState("Connecting...");
   const [lastTrace, setLastTrace] = useState<LastTrace>(null);
+  const [lastReceivedTraceId, setLastReceivedTraceId] = useState<string | null>(
+    null
+  );
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -63,6 +72,8 @@ export default function App() {
           displayText = parsed.api
             ? `${parsed.body} [${parsed.api}]`
             : parsed.body;
+          const tid = traceIdFromTraceparent(parsed.traceparent);
+          if (tid) setLastReceivedTraceId(tid);
           const carrier: Record<string, string> = {};
           if (parsed.traceparent) carrier.traceparent = parsed.traceparent;
           if (parsed.tracestate) carrier.tracestate = parsed.tracestate;
@@ -191,18 +202,32 @@ export default function App() {
           送出（MongoDB）
         </button>
       </div>
-      {lastTrace && (
-        <div style={styles.traceVerify}>
-          <strong>Trace 驗證（{lastTrace.endpoint}）</strong>
-          <br />
-          <code
-            style={styles.traceId}
-            title="在 Grafana/Tempo 用此 Trace ID 查詢，可看到 Frontend → API → Producer → Worker Consumer → WS 串聯"
-          >
-            {lastTrace.traceId}
-          </code>
-        </div>
-      )}
+      <div style={styles.traceRow}>
+        {lastTrace && (
+          <div style={styles.traceVerify}>
+            <strong>Trace 驗證（{lastTrace.endpoint}）</strong>
+            <br />
+            <code
+              style={styles.traceId}
+              title="在 Grafana/Tempo 用此 Trace ID 查詢，可看到 Frontend → API → Producer → Worker Consumer → WS 串聯"
+            >
+              {lastTrace.traceId}
+            </code>
+          </div>
+        )}
+        {lastReceivedTraceId && (
+          <div style={styles.traceVerify}>
+            <strong>最後收到訊息的 Trace ID</strong>
+            <br />
+            <code
+              style={styles.traceId}
+              title="此訊息經 WebSocket 送達時所帶的 traceparent 中的 Trace ID，可與上方比對是否為同一條 trace"
+            >
+              {lastReceivedTraceId}
+            </code>
+          </div>
+        )}
+      </div>
       <textarea
         style={styles.textarea}
         readOnly
@@ -222,8 +247,14 @@ const styles: Record<string, CSSProperties> = {
   },
   title: { marginBottom: "8px" },
   status: { marginBottom: "16px", color: "#555" },
-  traceVerify: {
+  traceRow: {
+    display: "flex",
+    flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
+    gap: "12px",
     marginBottom: "12px",
+  },
+  traceVerify: {
     padding: "8px 12px",
     fontSize: "13px",
     background: "#f5f5f5",

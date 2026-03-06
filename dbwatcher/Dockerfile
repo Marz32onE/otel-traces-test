@@ -1,6 +1,7 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /app
 COPY pkg/natstrace ./pkg/natstrace/
+COPY pkg/mongodbtrace ./pkg/mongodbtrace/
 COPY dbwatcher/go.mod ./dbwatcher/
 RUN cd dbwatcher && go mod download
 COPY dbwatcher/ ./dbwatcher/

@@ -7,16 +7,14 @@ import (
 	"os"
 	"time"
 
+	"github.com/Marz32onE/mongodbtrace/mongotrace"
 	"github.com/Marz32onE/natstrace/jetstreamtrace"
 	natstrace "github.com/Marz32onE/natstrace/natstrace"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	nats "github.com/nats-io/nats.go"
 	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
-	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/v2/mongo/otelmongo"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -31,7 +29,7 @@ const mongoDBName, mongoColl = "messaging", "messages"
 var (
 	natsConn    *natstrace.Conn
 	jetstreamJS jetstreamtrace.JetStream
-	mongoClient *mongo.Client
+	mongoClient *mongotrace.Client
 )
 
 func initTracer() func() {
@@ -124,9 +122,7 @@ func main() {
 		mongoURI = "mongodb://localhost:27017"
 	}
 	tpForMongo := otel.GetTracerProvider()
-	monitor := otelmongo.NewMonitor(otelmongo.WithTracerProvider(tpForMongo))
-	clientOpts := options.Client().ApplyURI(mongoURI).SetMonitor(monitor)
-	mongoClient, err = mongo.Connect(clientOpts)
+	mongoClient, err = mongotrace.NewClient(mongoURI, mongotrace.WithTracerProvider(tpForMongo))
 	if err != nil {
 		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}
@@ -213,7 +209,7 @@ func handleMessageMongo(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	doc := bson.M{"text": req.Text, "createdAt": time.Now()}
-	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl) // *mongotrace.Collection injects _oteltrace
 	if _, err := coll.InsertOne(ctx, doc); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store message"})
 		return

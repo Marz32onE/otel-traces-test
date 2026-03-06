@@ -8,12 +8,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Marz32onE/mongodbtrace/mongotrace"
 	"github.com/Marz32onE/natstrace/jetstreamtrace"
 	natstrace "github.com/Marz32onE/natstrace/natstrace"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
-	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/v2/mongo/otelmongo"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -70,12 +69,9 @@ func main() {
 	if mongoURI == "" {
 		mongoURI = "mongodb://localhost:27017"
 	}
-	monitor := otelmongo.NewMonitor(otelmongo.WithTracerProvider(tp))
-	clientOpts := options.Client().
-		ApplyURI(mongoURI).
-		SetMonitor(monitor).
-		SetServerSelectionTimeout(10 * time.Second)
-	mongoClient, err := mongo.Connect(clientOpts)
+	mongoClient, err := mongotrace.NewClient(mongoURI,
+		mongotrace.WithTracerProvider(tp),
+	)
 	if err != nil {
 		log.Fatalf("MongoDB connect: %v", err)
 	}
@@ -163,7 +159,10 @@ func main() {
 		if text == "" {
 			continue
 		}
-		if _, err := js.Publish(ctx, subject, []byte(text)); err != nil {
+		// Propagate trace context from document's _oteltrace so publish span links to API insert span
+		rawDoc, _ := bson.Marshal(event.FullDocument)
+		pubCtx := mongotrace.ContextFromDocument(sigCtx, rawDoc)
+		if _, err := js.Publish(pubCtx, subject, []byte(text)); err != nil {
 			log.Printf("Publish to NATS: %v", err)
 			continue
 		}
