@@ -15,10 +15,7 @@ import (
 	nats "github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 var (
@@ -89,50 +86,22 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	ctx := context.Background()
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "localhost:4317"
+	if err := natstrace.InitTracer(endpoint,
+		attribute.String("service.name", "worker"),
+		attribute.String("service.version", "0.0.1"),
+	); err != nil {
+		log.Fatalf("InitTracer: %v", err)
 	}
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
-	if err != nil {
-		log.Fatalf("OTLP exporter: %v", err)
-	}
-	res, _ := resource.New(ctx,
-		resource.WithAttributes(
-			attribute.String("service.name", "worker"),
-			attribute.String("service.version", "0.0.1"),
-		),
-	)
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-	)
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = tp.Shutdown(shutdownCtx)
-	}()
-
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
+	defer natstrace.ShutdownTracer()
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
 		natsURL = nats.DefaultURL
 	}
-
-	prop := otel.GetTextMapPropagator()
+	var err error
 	var natsConn *natstrace.Conn
 	for i := 0; i < 10; i++ {
-		natsConn, err = natstrace.Connect(natsURL, nil,
-			natstrace.WithTracerProvider(tp),
-			natstrace.WithPropagator(prop),
-		)
+		natsConn, err = natstrace.Connect(natsURL, nil)
 		if err == nil {
 			break
 		}

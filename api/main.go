@@ -15,12 +15,7 @@ import (
 	nats "github.com/nats-io/nats.go"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -32,67 +27,28 @@ var (
 	mongoClient *mongotrace.Client
 )
 
-func initTracer() func() {
-	ctx := context.Background()
-
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "localhost:4317"
-	}
-
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
-	if err != nil {
-		log.Fatalf("Failed to create OTLP exporter: %v", err)
-	}
-
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			attribute.String("service.name", "api"),
-			attribute.String("service.version", "0.0.1"),
-		),
-	)
-	if err != nil {
-		log.Fatalf("Failed to create resource: %v", err)
-	}
-
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-	)
-
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-
-	return func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		tp.Shutdown(shutdownCtx)
-	}
-}
-
 func main() {
-	shutdown := initTracer()
-	defer shutdown()
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	attrs := []attribute.KeyValue{
+		attribute.String("service.name", "api"),
+		attribute.String("service.version", "0.0.1"),
+	}
+	if err := natstrace.InitTracer(endpoint, attrs...); err != nil {
+		log.Fatalf("natstrace.InitTracer: %v", err)
+	}
+	if err := mongotrace.InitTracer(endpoint, attrs...); err != nil {
+		log.Fatalf("mongotrace.InitTracer: %v", err)
+	}
+	defer natstrace.ShutdownTracer()
+	defer mongotrace.ShutdownTracer()
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
 		natsURL = nats.DefaultURL
 	}
-
-	prop := otel.GetTextMapPropagator()
-	tp := otel.GetTracerProvider()
 	var err error
 	for i := 0; i < 10; i++ {
-		natsConn, err = natstrace.Connect(natsURL, nil,
-			natstrace.WithTracerProvider(tp),
-			natstrace.WithPropagator(prop),
-		)
+		natsConn, err = natstrace.Connect(natsURL, nil)
 		if err == nil {
 			break
 		}
@@ -121,8 +77,7 @@ func main() {
 	if mongoURI == "" {
 		mongoURI = "mongodb://localhost:27017"
 	}
-	tpForMongo := otel.GetTracerProvider()
-	mongoClient, err = mongotrace.NewClient(mongoURI, mongotrace.WithTracerProvider(tpForMongo))
+	mongoClient, err = mongotrace.NewClient(mongoURI)
 	if err != nil {
 		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}
