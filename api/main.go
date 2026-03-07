@@ -33,10 +33,10 @@ func main() {
 		attribute.String("service.name", "api"),
 		attribute.String("service.version", "0.0.1"),
 	}
-	if err := natstrace.InitTracer(endpoint, attrs...); err != nil {
+	if err := natstrace.InitTracer(endpoint, attrs); err != nil {
 		log.Fatalf("natstrace.InitTracer: %v", err)
 	}
-	if err := mongotrace.InitTracer(endpoint, attrs...); err != nil {
+	if err := mongotrace.InitTracer(endpoint, attrs); err != nil {
 		log.Fatalf("mongotrace.InitTracer: %v", err)
 	}
 	defer natstrace.ShutdownTracer()

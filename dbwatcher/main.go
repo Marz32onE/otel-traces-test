@@ -29,10 +29,10 @@ func main() {
 		attribute.String("service.name", "dbwatcher"),
 		attribute.String("service.version", "0.0.1"),
 	}
-	if err := mongotrace.InitTracer(endpoint, attrs...); err != nil {
+	if err := mongotrace.InitTracer(endpoint, attrs); err != nil {
 		log.Fatalf("mongotrace.InitTracer: %v", err)
 	}
-	if err := natstrace.InitTracer(endpoint, attrs...); err != nil {
+	if err := natstrace.InitTracer(endpoint, attrs); err != nil {
 		log.Fatalf("natstrace.InitTracer: %v", err)
 	}
 	defer mongotrace.ShutdownTracer()
@@ -101,7 +101,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("MongoDB change stream: %v", err)
 	}
-	defer stream.Close(ctx)
+	defer func() { _ = stream.Close(ctx) }()
 
 	// Graceful shutdown: cancel on SIGINT/SIGTERM so stream.Next returns and defers run
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

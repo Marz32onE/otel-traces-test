@@ -1,21 +1,25 @@
 # OTel Traces Test
 
-一個展示 **OpenTelemetry 分散式追蹤（Distributed Tracing）** 的全端範例專案。使用者從瀏覽器送出訊息，可經三條路徑：**JetStream**（API 發布到 NATS）、**Core NATS**（fire-and-go）、**MongoDB**（API 寫入 Mongo → dbwatcher 監聽 change stream → 轉發至 NATS → Worker）；Worker 訂閱後透過 WebSocket 廣播回前端，**同一條 trace 從前端發送到前端接收** 貫穿各服務，可在 Grafana/Tempo 檢視完整路徑。
+[繁體中文 (Traditional Chinese)](README.zh-TW.md)
 
 ---
 
-## 給首次使用者與 AI Agent 的專案摘要
-
-- **目的**：示範端到端 W3C Trace Context 傳播：瀏覽器 → API（HTTP + NATS 發布）→ Worker（NATS 訂閱 + WebSocket 廣播）→ 瀏覽器（WebSocket 接收並建立最後一段 span）。
-- **技術棧**：React 18 + TypeScript + Vite（前端，**Grafana Faro SDK** 負責 trace 與 W3C 傳播）、Go + Gin（API）、Go + gorilla/websocket（Worker）、NATS（JetStream + Core）、OpenTelemetry（OTel）SDK、OTel Collector、Grafana Tempo、Grafana。
-- **三條路徑**：**JetStream**（`POST /api/message` → `messages.new` → Worker）、**Core NATS**（`POST /api/message-core` → `messages.core` → Worker）、**MongoDB**（`POST /api/message-mongo` → API 寫入 Mongo → **dbwatcher** 監聽 change stream → 發布 `messages.db` → Worker Consume）；同一 trace 從 API 貫穿到 Worker，可在 Tempo 依 trace ID 查詢。
-- **Submodule**：`pkg/natstrace`（[natstrace](https://github.com/Marz32onE/natstrace) — NATS 的 OTel 包裝，W3C 傳播 + JetStream/Core）。Clone 後需 `git submodule update --init`。
-- **建置與執行**：Docker Compose 從專案根目錄 build；`api` 與 `worker` 的 build context 為根目錄。使用 `make up` 或 `docker compose up --build`（Makefile 預設為 `podman compose`，可覆寫 `COMPOSE_CMD='docker compose'`）。
-- **關鍵設定**：`api`、`worker` 皆需 `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` 才會把 span 送到 Tempo；前端透過 `VITE_OTEL_COLLECTOR_URL` 以 OTLP/HTTP 送 trace，經 Collector（CORS 支援）轉發到 Tempo。
+A full-stack example demonstrating **OpenTelemetry distributed tracing**. Users send messages from the browser over three paths: **JetStream** (API publishes to NATS), **Core NATS** (fire-and-go), and **MongoDB** (API writes to Mongo → dbwatcher watches change stream → forwards to NATS → Worker). The Worker subscribes and broadcasts back to the frontend over WebSocket; **one trace runs from frontend send to frontend receive** across all services and can be viewed in Grafana/Tempo.
 
 ---
 
-## 架構總覽
+## Summary for first-time users and AI agents
+
+- **Goal:** End-to-end W3C Trace Context propagation: browser → API (HTTP + NATS publish) → Worker (NATS subscribe + WebSocket broadcast) → browser (WebSocket receive and final span).
+- **Stack:** React 18 + TypeScript + Vite (frontend; **Grafana Faro SDK** for trace and W3C propagation), Go + Gin (API), Go + gorilla/websocket (Worker), NATS (JetStream + Core), OpenTelemetry SDK, OTel Collector, Grafana Tempo, Grafana.
+- **Three paths:** **JetStream** (`POST /api/message` → `messages.new` → Worker), **Core NATS** (`POST /api/message-core` → `messages.core` → Worker), **MongoDB** (`POST /api/message-mongo` → API writes to Mongo → **dbwatcher** watches change stream → publishes `messages.db` → Worker). One trace flows from API to Worker; query by trace ID in Tempo.
+- **Submodule:** `pkg/natstrace` ([natstrace](https://github.com/Marz32onE/natstrace) — OTel wrapper for NATS, W3C + JetStream/Core). Run `git submodule update --init` after clone.
+- **Build & run:** Docker Compose builds from repo root; `api` and `worker` use root as build context. Use `make up` or `docker compose up --build` (Makefile defaults to `podman compose`; override with `COMPOSE_CMD='docker compose'`).
+- **Config:** `api` and `worker` need `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` to send spans to Tempo; frontend uses `VITE_OTEL_COLLECTOR_URL` for OTLP/HTTP via Collector (CORS) to Tempo.
+
+---
+
+## Architecture
 
 ```
 ┌──────────┐   HTTP POST    ┌──────────┐   NATS JetStream   ┌──────────┐
@@ -44,306 +48,241 @@
                                              └──────────┘
 ```
 
-### 為什麼需要 OTel Collector？
+### Why OTel Collector?
 
-API 與 Worker（Go）可直接用 gRPC 送 trace 到 Tempo。**瀏覽器** 則需透過 HTTP 送 OTLP，且 Tempo 的 OTLP receiver 不支援 CORS，瀏覽器會遭 CORS 阻擋。OTel Collector 的 HTTP receiver 支援 CORS，作為瀏覽器與 Tempo 之間的橋樑。
-
----
-
-## 服務說明
-
-| 服務               | 技術                            | 用途                                                                                                                             | Port                                   |
-| ------------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| **Frontend**       | React 18 + TypeScript + Vite    | 使用者介面：輸入訊息、即時接收 WebSocket；建立 `send-message` 與 `receive message` span；三按鈕（JetStream / Core / MongoDB）     | `3000`                                 |
-| **API**            | Go (Gin)                        | 三端點：`POST /api/message`（JetStream）、`POST /api/message-core`（Core）、`POST /api/message-mongo`（寫入 MongoDB）；回傳 `trace_id` | `8088`                                 |
-| **Worker**         | Go (gorilla/websocket)          | JetStream（`messages.new`、`messages.db`）與 Core Subscribe；收到後將 **traceparent/tracestate + body + api** 以 JSON 經 WebSocket 廣播 | `8082`                                 |
-| **MongoDB**        | Mongo 7 (replica set rs0)       | 儲存 `message-mongo` 訊息；dbwatcher 監聽 change stream，需 replica set                                                          | `27017`                                |
-| **dbwatcher**      | Go + mongo-driver               | 監聽 MongoDB `messaging.messages` 的 insert；將新文件轉發至 NATS JetStream 主題 `messages.db`，Worker 訂閱後經 WebSocket 廣播   | 無對外 port                            |
-| **NATS**           | NATS Alpine + JetStream         | 訊息佇列，持久化；healthcheck 需 `wget`（故用 alpine）                                                                           | `4222`（client）、`8222`（monitoring） |
-| **OTel Collector** | OpenTelemetry Collector Contrib | 接收 gRPC/HTTP OTLP，轉發到 Tempo；HTTP 端點啟用 CORS 供瀏覽器使用                                                               | `4317`（gRPC）、`4318`（HTTP）         |
-| **Tempo**          | Grafana Tempo 2.9.0             | 分散式追蹤後端（**鎖定 2.9.0**，v2.10+ 不相容）                                                                                  | `3200`                                 |
-| **Grafana**        | Grafana latest                  | 視覺化介面，匿名 Admin、免登入；已配置 Tempo datasource                                                                          | `3001`                                 |
+API and Worker (Go) can send traces to Tempo via gRPC. The **browser** must use HTTP OTLP, and Tempo’s OTLP receiver does not support CORS, so the browser would be blocked. OTel Collector’s HTTP receiver supports CORS and bridges browser and Tempo.
 
 ---
 
-## 訊息流程
+## Services
 
-1. 使用者在前端輸入訊息，按下 **送出（JetStream）**、**送出（Core NATS fire-and-go）** 或 **送出（MongoDB）**（或 Enter 對應 JetStream）。
-2. 前端建立 `send-message-jetstream` / `send-message-core` / `send-message-mongo` span（CLIENT），以 `traceparent` / `tracestate` header 傳播 context，對 API 發送 HTTP POST。
-3. API 的 `otelgin` 延續同一 trace；**JetStream** 路徑使用 `jetstreamtrace.Publish` 建立 `messages.new publish` span，**Core** 路徑使用 `natstrace.Publish` 建立 `messages.core publish`；**MongoDB** 路徑將訊息寫入 `messaging.messages`，回傳 `trace_id`。
-4. **MongoDB 路徑**：dbwatcher 監聽該 collection 的 change stream（僅 `insert`）；新文件寫入後，dbwatcher 將 `text` 發布至 NATS JetStream 主題 `messages.db`。Worker 訂閱 `messages.db`，收到後與 JetStream/Core 路徑相同，將 **traceparent、tracestate、body、api**（此處 api 為 `"DB"`）組成 JSON 經 WebSocket 廣播。
-5. **JetStream / Core 路徑**：Worker 以 JetStream（Consume / Messages）或 Core Subscribe 收訊；`natstrace` / `jetstreamtrace` 從 headers 提取 trace context，建立 receive span，並將 **traceparent、tracestate、body、api** 組成 JSON 經 WebSocket 廣播。
-6. 前端收到 WebSocket 訊息後解析 JSON；若有 `traceparent` 與 `body`，則用 `propagation.extract` 還原 context，建立 `receive message` span（CONSUMER），完成同一條 trace。畫面上會顯示 **Trace 驗證** 與上次送出的 `trace_id`，可貼到 Grafana/Tempo 查詢。
+| Service          | Tech                     | Purpose                                                                                                                                 | Port                                   |
+|------------------|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------|
+| **Frontend**     | React 18 + TS + Vite     | UI: send message, receive via WebSocket; `send-message` and `receive message` spans; three buttons (JetStream / Core / MongoDB)           | `3000`                                 |
+| **API**          | Go (Gin)                 | Three endpoints: `POST /api/message` (JetStream), `POST /api/message-core` (Core), `POST /api/message-mongo` (MongoDB); returns `trace_id` | `8088`                                 |
+| **Worker**       | Go (gorilla/websocket)   | JetStream (`messages.new`, `messages.db`) and Core Subscribe; broadcasts **traceparent/tracestate + body + api** as JSON over WebSocket  | `8082`                                 |
+| **MongoDB**      | Mongo 7 (replica set)    | Stores `message-mongo` payloads; dbwatcher uses change stream (replica set required)                                                    | `27017`                                |
+| **dbwatcher**    | Go + mongo-driver        | Watches `messaging.messages` inserts; forwards to NATS JetStream topic `messages.db`; Worker subscribes and broadcasts                  | no public port                         |
+| **NATS**         | NATS Alpine + JetStream  | Message queue; healthcheck uses `wget` (alpine)                                                                                         | `4222` (client), `8222` (monitoring)   |
+| **OTel Collector** | OTel Collector Contrib | Receives gRPC/HTTP OTLP, forwards to Tempo; HTTP endpoint has CORS for browser                                                          | `4317` (gRPC), `4318` (HTTP)           |
+| **Tempo**        | Grafana Tempo 2.9.0      | Trace backend (**pinned 2.9.0**; v2.10+ incompatible)                                                                                    | `3200`                                 |
+| **Grafana**      | Grafana latest           | UI; anonymous Admin; Tempo datasource configured                                                                                        | `3001`                                 |
 
 ---
 
-## Trace 流程（Grafana 中可見）
+## Message flow
 
-一條完整 trace 的 span 樹範例：
+1. User enters a message and clicks **Send (JetStream)**, **Send (Core NATS)**, or **Send (MongoDB)** (or Enter for JetStream).
+2. Frontend creates `send-message-jetstream` / `send-message-core` / `send-message-mongo` span (CLIENT), propagates via `traceparent`/`tracestate` headers, and sends HTTP POST to API.
+3. API’s `otelgin` continues the trace; **JetStream** path uses `jetstreamtrace.Publish`; **Core** uses `natstrace.Publish`; **MongoDB** path writes to `messaging.messages` and returns `trace_id`.
+4. **MongoDB path:** dbwatcher watches the collection’s change stream (insert only); on new doc it publishes to JetStream topic `messages.db`. Worker subscribes and, as with JetStream/Core, broadcasts **traceparent, tracestate, body, api** (api = `"DB"`) over WebSocket.
+5. **JetStream/Core:** Worker receives via JetStream (Consume/Messages) or Core Subscribe; `natstrace`/`jetstreamtrace` extract trace from headers, create receive span, and broadcast **traceparent, tracestate, body, api** over WebSocket.
+6. Frontend parses WebSocket JSON; if `traceparent` and `body` exist, uses `propagation.extract` and creates `receive message` span (CONSUMER), completing the trace. UI shows **Trace verification** and last `trace_id` for Grafana/Tempo.
 
-**JetStream 路徑**（Core 路徑為 `messages.core` publish/receive）：
+---
+
+## Trace flow (in Grafana)
+
+**JetStream path** (Core uses `messages.core`):
 
 ```
 Frontend: send-message-jetstream          (SpanKind CLIENT)
-  └─ API: POST /api/message               (otelgin, SpanKind SERVER)
-       └─ API: messages.new publish       (jetstreamtrace, SpanKind PRODUCER)
-            └─ Worker: messages.new receive (jetstreamtrace, SpanKind CONSUMER, messaging.consumer.name)
-                 └─ Frontend: receive message (SpanKind CONSUMER)
+  └─ API: POST /api/message               (otelgin, SERVER)
+       └─ API: messages.new publish       (jetstreamtrace, PRODUCER)
+            └─ Worker: messages.new receive (jetstreamtrace, CONSUMER)
+                 └─ Frontend: receive message (CONSUMER)
 ```
 
-**MongoDB 路徑**（API 寫入 → dbwatcher 監聽 → 轉發 `messages.db` → Worker）：
+**MongoDB path:**
 
 ```
-Frontend: send-message-mongo              (SpanKind CLIENT)
-  └─ API: POST /api/message-mongo         (otelgin, SpanKind SERVER)
+Frontend: send-message-mongo              (CLIENT)
+  └─ API: POST /api/message-mongo         (otelgin, SERVER)
        └─ API: MongoDB insert             (otelmongo)
-            └─ dbwatcher: change stream 偵測 insert → Publish messages.db
-                 └─ Worker: messages.db receive (SpanKind CONSUMER)
-                      └─ Frontend: receive message (SpanKind CONSUMER)
+            └─ dbwatcher: change stream → Publish messages.db
+                 └─ Worker: messages.db receive (CONSUMER)
+                      └─ Frontend: receive message (CONSUMER)
 ```
 
-- **Frontend**：OTLP/HTTP → OTel Collector（CORS 由 Collector 處理）。
-- **API / Worker**：OTLP/gRPC → OTel Collector。
-- **OTel Collector**：統一轉發到 Tempo。
-- API 的 CORS 設定允許 `traceparent`、`tracestate`，確保瀏覽器能傳播 trace context。
+- **Frontend:** OTLP/HTTP → OTel Collector (CORS).
+- **API/Worker:** OTLP/gRPC → OTel Collector → Tempo.
+- API CORS allows `traceparent`, `tracestate`.
 
 ---
 
-## 前置需求
+## Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) + [Docker Compose](https://docs.docker.com/compose/)（或 Podman Compose，見下方 Makefile）
-- [Git](https://git-scm.com/)（含 submodule 支援）
+- [Docker](https://docs.docker.com/get-docker/) + [Docker Compose](https://docs.docker.com/compose/) (or Podman Compose; see Makefile)
+- [Git](https://git-scm.com/) (with submodule support)
+
+### Development: tests and lint
+
+- Go tests use **testify** (`require`/`assert`) in `pkg/natstrace`, `pkg/mongodbtrace`.
+- Run **`go vet ./...`** and **`go test ./...`** in each module (`api`, `worker`, `dbwatcher`, `pkg/natstrace`, `pkg/mongodbtrace`).
+- With [golangci-lint](https://golangci-lint.run/) installed, run it per Go module directory (or `go work` at root).
 
 ---
 
-## 快速開始
+## Quick start
 
 ```bash
-# Clone（含 submodule）
 git clone --recurse-submodules git@github.com:Marz32onE/otel-traces-test.git
 cd otel-traces-test
 
-# 若已 clone 但未拉 submodule
+# If already cloned without submodules
 git submodule update --init
 
-# 啟動所有服務（二擇一）
+# Start all services
 docker compose up --build
-# 或使用 Makefile（預設為 podman compose）
-make up
-# 若要用 docker compose： COMPOSE_CMD='docker compose' make up
+# Or: make up   (default: podman compose; use COMPOSE_CMD='docker compose' for Docker)
 ```
 
-啟動後可開啟：
+| Service          | URL                     |
+|------------------|-------------------------|
+| Frontend         | http://localhost:3000   |
+| Grafana          | http://localhost:3001   |
+| NATS Monitoring  | http://localhost:8222   |
+| Tempo API        | http://localhost:3200   |
 
-| 服務            | URL                   |
-| --------------- | --------------------- |
-| Frontend        | http://localhost:3000 |
-| Grafana         | http://localhost:3001 |
-| NATS Monitoring | http://localhost:8222 |
-| Tempo API       | http://localhost:3200 |
+### View traces
 
-### 查看 Traces
+1. Open http://localhost:3001 (Grafana).
+2. **Explore** → datasource **Tempo** → **Search** → Service name `frontend`, `api`, or `worker`.
+3. Open a trace to see the full path from send to receive.
 
-1. 開啟 http://localhost:3001（Grafana，免登入）。
-2. 左側選 **Explore**，資料來源選 **Tempo**。
-3. 搜尋模式選 **Search**，Service Name 選 `frontend`、`api` 或 `worker`。
-4. 點選任一 trace，可看到從 `send-message` 到 `receive message` 的完整路徑。
-
-### 驗證 Trace（命令列）
-
-API 回傳 `trace_id`，可用於確認同一 trace 貫穿 API 與 Worker：
+### Verify trace (CLI)
 
 ```bash
-# JetStream
-RES=$(curl -s -X POST http://localhost:8088/api/message \
-  -H "Content-Type: application/json" \
-  -d '{"text":"hello jetstream"}')
-echo "$RES"   # {"endpoint":"JetStream","status":"published","trace_id":"..."}
-
-# Core NATS
-RES=$(curl -s -X POST http://localhost:8088/api/message-core \
-  -H "Content-Type: application/json" \
-  -d '{"text":"hello core"}')
-echo "$RES"   # {"endpoint":"Core","status":"published","trace_id":"..."}
-
-# 數秒後以 trace_id 查 Tempo（將 <TRACE_ID> 換成上方的 trace_id）
-sleep 5
-curl -s "http://localhost:3200/api/traces/<TRACE_ID>" | head -c 500
-# 應可看到 service.name 為 api 與 worker 的 spans（例如 POST /api/message、messages.new publish、messages.new receive）
+RES=$(curl -s -X POST http://localhost:8088/api/message -H "Content-Type: application/json" -d '{"text":"hello"}')
+echo "$RES"   # {"trace_id":"..."}
 ```
 
-若要看到 **含前端的完整 trace**，請從瀏覽器 http://localhost:3000 送一則訊息；畫面上會顯示該次請求的 **Trace 驗證** 與 `trace_id`，可複製到 Grafana Explore → Tempo 查詢。
+### Check whole trace propagation path
 
-### 驗證完整路徑（含 MongoDB）
+After `make up`, run:
 
-專案根目錄提供腳本一次驗證 **Go 建置、Docker 啟動、所有 API 端點、MongoDB 路徑（API → Mongo → dbwatcher → NATS → Worker）、前端與 Tempo trace**：
+```bash
+make verify-trace
+```
+
+This sends a request with a known trace ID to `POST /api/message-mongo`, waits for OTLP flush, then queries Tempo and verifies the trace is present. Exit 0 means propagation (API → Mongo → Tempo) is working.
+
+One-shot: bring up the stack and run the check:
+
+```bash
+make up-verify
+```
+
+For a full trace including the frontend, send a message from http://localhost:3000 and use the **Trace verification** / `trace_id` on the page in Grafana Explore → Tempo.
+
+### Verify full path (with MongoDB)
 
 ```bash
 ./scripts/verify-full-path.sh
 ```
 
-需已安裝 `go`、`docker`、`docker compose`。腳本會：建置 api / worker / dbwatcher、`docker compose up -d --build`、等待服務就緒、對 `/api/message`、`/api/message-core`、`/api/message-mongo` 發送請求、檢查 dbwatcher/worker 日誌是否出現轉發與接收、並以 traceparent 呼叫 `/api/message-mongo` 後查詢 Tempo。
+Requires `go`, `docker`, `docker compose`. The script builds, brings up Compose, hits all API endpoints, and checks dbwatcher/worker logs and Tempo.
 
-手動驗證 MongoDB 路徑可依序執行：
+Manual MongoDB path check:
 
 ```bash
-# 寫入 MongoDB（API）
 curl -s -X POST http://localhost:8088/api/message-mongo -H "Content-Type: application/json" -d '{"text":"mongo-e2e"}'
-# 預期: {"endpoint":"MongoDB","status":"stored","trace_id":"..."}
-
-# 數秒後檢查 dbwatcher 是否轉發、worker 是否收到
-docker compose logs dbwatcher --tail 20   # 應見 "Forwarded to messages.db"
-docker compose logs worker --tail 20       # 應見 "[DB] received"
+docker compose logs dbwatcher --tail 20
+docker compose logs worker --tail 20
 ```
 
-### 停止與清理
+### Stop and clean
 
 ```bash
 docker compose down
-# 或連同 volumes 一併刪除
-docker compose down -v
-
-# 使用 Makefile 時
+docker compose down -v   # with volumes
 make down
-make clean   # 含 -v
+make clean   # with -v
 ```
 
 ---
 
-## 專案結構
+## Project structure
 
 ```
 .
-├── api/                        # API server（Go + Gin）
-│   ├── Dockerfile              # 從專案根目錄 build
-│   ├── go.mod                  # require natstrace v0.1.4，replace => ../pkg/natstrace
-│   ├── go.sum
-│   └── main.go                 # OTel + otelgin + natstrace/jetstreamtrace + MongoDB（三端點、回傳 trace_id）
-├── worker/                     # WebSocket worker（Go）
-│   ├── Dockerfile              # 從專案根目錄 build
-│   ├── go.mod
-│   ├── go.sum
-│   └── main.go                 # natstrace/jetstreamtrace 訂閱（messages.new、messages.db、messages.core）+ WS broadcast
-├── dbwatcher/                  # MongoDB change stream → NATS（Go）
-│   ├── Dockerfile              # 從專案根目錄 build
-│   ├── go.mod
-│   ├── go.sum
-│   └── main.go                 # 監聽 messaging.messages insert → 發布 messages.db
-├── frontend/                   # React 前端（TypeScript）
-│   ├── Dockerfile
-│   ├── package.json, tsconfig.json, vite.config.js, index.html, nginx.conf
-│   └── src/
-│       ├── main.tsx
-│       ├── App.tsx             # 三按鈕（JetStream / Core / MongoDB）、Trace 驗證、WS 解析 traceparent
-│       └── tracing.ts          # Grafana Faro 初始化（TracingInstrumentation、OtlpHttpTransport、propagateTraceHeaderCorsUrls）
+├── api/              # Go + Gin API (three endpoints, trace_id)
+├── worker/           # WebSocket worker (NATS subscribe + broadcast)
+├── dbwatcher/        # Mongo change stream → NATS
+├── frontend/         # React + Vite + Grafana Faro
 ├── pkg/
-│   └── natstrace/              # Git submodule — natstrace（NATS OTel 包裝，W3C + JetStream/Core）
-├── charts/otel-traces-test/config/   # tempo.yaml、otel-collector.yaml（Compose 掛載）
+│   ├── natstrace/    # Git submodule — NATS OTel (W3C + JetStream/Core)
+│   └── mongodbtrace/ # mongotrace — MongoDB OTel (InitTracer before NewClient)
+├── charts/otel-traces-test/config/
 ├── grafana/
-│   └── provisioning/datasources/datasource.yml   # Tempo datasource
-├── docker-compose.yml          # mongodb、api、worker、dbwatcher、frontend、nats、tempo、otel-collector、grafana
-├── Makefile                    # up / down / clean / build / logs / ps（預設 COMPOSE_CMD=podman compose）
-└── LICENSE                     # Apache 2.0
+├── docker-compose.yml
+├── Makefile
+└── LICENSE
 ```
 
-`api/Dockerfile` 與 `worker/Dockerfile` 的 build context 為專案根目錄。
+`api` and `worker` Dockerfiles use the repo root as build context.
+
+### Tracing init and API (natstrace / mongodbtrace)
+
+- **natstrace:** Call **`natstrace.InitTracer(endpoint, attrs...)`** before **`natstrace.Connect`**. Otherwise `Connect` returns `ErrInitTracerRequired`. Use **`defer natstrace.ShutdownTracer()`** on exit.
+- **mongodbtrace:** Call **`mongotrace.InitTracer(endpoint, attrs...)`** before **`mongotrace.NewClient(uri)`**. Otherwise `NewClient` returns **`ErrInitTracerRequired`**. Use **`defer mongotrace.ShutdownTracer()`** on exit.
+- **API:** `natstrace.Connect(url, natsOpts)` — no `WithTracerProvider`/`WithPropagator`; tracer from global. `mongotrace.NewClient(uri)` only accepts **`WithOtelMongoOptions(...)`**.
+- **Tests:** Use **`natstrace.InitTracer("", natstrace.WithTracerProvider(tp))`** or **`mongotrace.InitTracer("", mongotrace.WithTracerProvider(tp))`** (and optionally `otel.SetTextMapPropagator(prop)` for natstrace) before `Connect`/`NewClient`.
 
 ---
 
-## Git Submodules
+## Git submodules
 
-本專案使用一個 submodule：
+| Path             | Description                                      |
+|------------------|--------------------------------------------------|
+| `pkg/natstrace`  | [natstrace](https://github.com/Marz32onE/natstrace) — NATS OTel; use tag v0.1.4+ |
 
-| 路徑            | 說明                                                                 | 備註                                           |
-| --------------- | -------------------------------------------------------------------- | ---------------------------------------------- |
-| `pkg/natstrace` | [natstrace](https://github.com/Marz32onE/natstrace) — NATS 的 OTel 包裝 | W3C 傳播、JetStream/Core；建議使用 tag v0.1.4+ |
-
-`api` 與 `worker` 的 `go.mod` 使用 `replace` 指向本地 submodule（本地開發時）：
-
-```
-replace github.com/Marz32onE/natstrace => ../pkg/natstrace
-```
-
-Clone 後執行 `git submodule update --init`；若要指定版本可 `cd pkg/natstrace && git fetch --tags && git checkout v0.1.4`。修改 `pkg/natstrace` 後，在專案根目錄重建 api/worker 映像即可使用最新程式碼。
+`api` and `worker` use `replace github.com/Marz32onE/natstrace => ../pkg/natstrace` for local development. After clone run `git submodule update --init`.
 
 ---
 
-## 環境變數
+## Environment variables
 
 ### API
 
-| 變數                          | 預設值                  | 說明                                                          |
-| ----------------------------- | ----------------------- | ------------------------------------------------------------- |
-| `NATS_URL`                    | `nats://localhost:4222` | NATS 連線地址                                                 |
-| `MONGODB_URI`                 | `mongodb://localhost:27017` | MongoDB 連線地址（`/api/message-mongo` 寫入用）            |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`        | OTel Collector gRPC 端點（Docker 內為 `otel-collector:4317`） |
+| Variable                       | Default                    | Description                    |
+|--------------------------------|----------------------------|--------------------------------|
+| `NATS_URL`                     | `nats://localhost:4222`    | NATS address                  |
+| `MONGODB_URI`                  | `mongodb://localhost:27017`| MongoDB (for `/api/message-mongo`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`           | OTel Collector gRPC (use `otel-collector:4317` in Docker) |
 
 ### Worker
 
-| 變數                          | 預設值                  | 說明                                                                                                       |
-| ----------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `NATS_URL`                    | `nats://localhost:4222` | NATS 連線地址                                                                                              |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`        | OTel Collector gRPC 端點（**必設**，否則 worker span 不會出現在 Tempo；Docker 內為 `otel-collector:4317`） |
+| Variable                       | Default                 | Description (set for spans in Tempo) |
+|--------------------------------|-------------------------|--------------------------------------|
+| `NATS_URL`                     | `nats://localhost:4222` | NATS address                         |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`        | Use `otel-collector:4317` in Docker  |
 
 ### dbwatcher
 
-| 變數                          | 預設值                  | 說明                                                                 |
-| ----------------------------- | ----------------------- | -------------------------------------------------------------------- |
-| `MONGODB_URI`                 | `mongodb://localhost:27017` | MongoDB 連線地址（監聽 `messaging.messages` change stream）      |
-| `NATS_URL`                    | `nats://localhost:4222` | NATS 連線地址（發布至 JetStream 主題 `messages.db`）                 |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`        | OTel Collector gRPC 端點（Docker 內為 `otel-collector:4317`）        |
+| Variable                       | Default                    |
+|--------------------------------|----------------------------|
+| `MONGODB_URI`                  | `mongodb://localhost:27017`|
+| `NATS_URL`                     | `nats://localhost:4222`    |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`           |
 
-### Frontend（Build-time）
+### Frontend (build-time)
 
-| 變數                      | 預設值                  | 說明                                       |
-| ------------------------- | ----------------------- | ------------------------------------------ |
-| `VITE_API_URL`            | `http://localhost:8088` | API server URL                             |
-| `VITE_WS_URL`             | `ws://localhost:8082`   | WebSocket worker URL                       |
-| `VITE_OTEL_COLLECTOR_URL` | `http://localhost:4318` | OTel Collector HTTP 端點（瀏覽器 OTLP 用） |
+| Variable                   | Default                    |
+|----------------------------|----------------------------|
+| `VITE_API_URL`             | `http://localhost:8088`   |
+| `VITE_WS_URL`              | `ws://localhost:8082`      |
+| `VITE_OTEL_COLLECTOR_URL`  | `http://localhost:4318`   |
 
 ---
 
-## 疑難排解
+## Troubleshooting
 
-### 重啟 OTel Collector 後 API traces 消失
-
-重啟 `otel-collector` 後，API 可能出現 `dial tcp ...: no route to host`（Docker 網路變更）。一併重啟依賴服務：
-
-```bash
-docker compose restart otel-collector api worker
-```
-
-### Worker 的 span 沒有出現在 Tempo
-
-確認 worker 有設定 `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317`（見 `docker-compose.yml`）。未設定時 worker 預設連 `localhost:4317`，在容器內無法連到 Collector。
-
-### Docker build 快取導致前端更新未生效
-
-強制無快取重建：
-
-```bash
-docker compose build --no-cache frontend
-docker compose up -d frontend
-```
-
-### Tempo 查詢 trace 回傳 404
-
-Tempo 需數秒將 span 寫入可查詢的 block。送完訊息後稍等再查：
-
-```bash
-sleep 5
-curl -s -G "http://localhost:3200/api/search" --data-urlencode "tags=service.name=api"
-```
-
-### Go 服務的 Dockerfile build context
-
-`api/Dockerfile` 與 `worker/Dockerfile` 的 build context 為專案根目錄；`COPY` 路徑相對於根目錄。若使用 `replace github.com/Marz32onE/natstrace => ../pkg/natstrace`，Docker build 時需能取得 `pkg/natstrace`（例如 context 含 submodule，或 Dockerfile 內 `COPY pkg/natstrace ./pkg/natstrace/`）；否則改為依賴遠端版本（移除 replace、`go get` 可取得 v0.1.4+）。
-
-### Makefile 使用 Docker 而非 Podman
-
-```bash
-COMPOSE_CMD='docker compose' make up
-```
+- **API traces disappear after Collector restart:** Restart dependent services: `docker compose restart otel-collector api worker`.
+- **Worker spans missing in Tempo:** Set `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` in `docker-compose.yml`.
+- **Frontend changes not applied:** `docker compose build --no-cache frontend && docker compose up -d frontend`.
+- **Tempo returns 404 for trace:** Wait a few seconds after sending then query again.
+- **Makefile with Docker:** `COMPOSE_CMD='docker compose' make up`.
 
 ---
 

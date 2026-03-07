@@ -26,7 +26,7 @@ KIND_CLUSTER ?= $(shell \
 HELM_RELEASE ?= otel-traces-test
 HELM_NAMESPACE ?= otel
 
-.PHONY: up down clean restart build logs ps help detect
+.PHONY: up down clean restart build logs ps help detect verify-trace up-verify
 .PHONY: kind-build kind-install kind-uninstall kind-verify kind-up kind-down
 
 # Show all auto-detected variables
@@ -64,6 +64,16 @@ ps:
 logs:
 	$(COMPOSE_CMD) logs -f $(SVC)
 
+# Check whole trace propagation path (stack must be up: make up first)
+verify-trace:
+	@bash scripts/check-trace-propagation.sh
+
+# Bring up stack then run trace propagation check
+up-verify: up
+	@echo "Waiting 25s for services to be ready..."
+	@sleep 25
+	@bash scripts/check-trace-propagation.sh
+
 help:
 	@echo "Usage:"
 	@echo "  make up     - Start all services ($(COMPOSE_CMD) up -d --build)"
@@ -72,9 +82,11 @@ help:
 	@echo "  make restart - down then up"
 	@echo "  make build  - Build images only"
 	@echo "  make ps     - Show service status"
-	@echo "  make logs   - Follow logs (optional: make logs SVC=api)"
-	@echo "  make detect - Show auto-detected COMPOSE_CMD, DOCKER_CMD, KIND_CLUSTER"
-	@echo "  make help   - This message"
+	@echo "  make logs         - Follow logs (optional: make logs SVC=api)"
+	@echo "  make verify-trace  - Check trace propagation (API→Tempo); run after 'make up'"
+	@echo "  make up-verify    - make up, wait, then verify-trace"
+	@echo "  make detect       - Show auto-detected COMPOSE_CMD, DOCKER_CMD, KIND_CLUSTER"
+	@echo "  make help         - This message"
 	@echo ""
 	@echo "Kind (cluster must exist, KIND_CLUSTER=$(KIND_CLUSTER)):"
 	@echo "  make kind-build     - Build images with $(DOCKER_CMD) and load into kind"

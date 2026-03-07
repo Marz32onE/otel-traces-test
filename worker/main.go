@@ -52,7 +52,7 @@ func broadcastWithTrace(ctx context.Context, body []byte, apiName string) {
 	for conn := range clients {
 		if err := conn.WriteMessage(websocket.TextMessage, raw); err != nil {
 			log.Printf("WebSocket write error: %v", err)
-			conn.Close()
+			_ = conn.Close()
 			delete(clients, conn)
 		}
 	}
@@ -68,7 +68,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		clientsMu.Lock()
 		delete(clients, conn)
 		clientsMu.Unlock()
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	clientsMu.Lock()
@@ -160,12 +160,12 @@ func main() {
 	defer iter.Stop()
 	go func() {
 		for {
-			ctx, msg, err := iter.Next()
-			if err != nil {
+			msgCtx, msg, nextErr := iter.Next()
+			if nextErr != nil {
 				return
 			}
 			log.Printf("[Messages] received: %s", string(msg.Data()))
-			broadcastWithTrace(ctx, msg.Data(), "Messages")
+			broadcastWithTrace(msgCtx, msg.Data(), "Messages")
 			_ = msg.Ack()
 		}
 	}()
@@ -181,8 +181,8 @@ func main() {
 	}
 	go func() {
 		for {
-			batch, err := consFetch.Fetch(5)
-			if err != nil {
+			batch, fetchErr := consFetch.Fetch(5)
+			if fetchErr != nil {
 				continue
 			}
 			for m := range batch.MessagesWithContext() {
