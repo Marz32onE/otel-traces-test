@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	nats "github.com/nats-io/nats.go"
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -101,7 +102,10 @@ func main() {
 
 	r.POST("/api/message", handleMessage)            // JetStream (natstrace)
 	r.POST("/api/message-core", handleMessageCore)   // Core NATS fire-and-go
-	r.POST("/api/message-mongo", handleMessageMongo) // Store to MongoDB
+	r.POST("/api/message-mongo", handleMessageMongo) // MongoDB Insert
+	r.POST("/api/message-mongo-update", handleMessageMongoUpdate)
+	r.POST("/api/message-mongo-read", handleMessageMongoRead)
+	r.POST("/api/message-mongo-delete", handleMessageMongoDelete)
 
 	log.Println("API server starting on :8088")
 	if err := r.Run(":8088"); err != nil {
@@ -164,14 +168,125 @@ func handleMessageMongo(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	doc := bson.M{"text": req.Text, "createdAt": time.Now()}
-	coll := mongoClient.Database(mongoDBName).Collection(mongoColl) // *mongotrace.Collection injects _oteltrace
-	if _, err := coll.InsertOne(ctx, doc); err != nil {
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	res, err := coll.InsertOne(ctx, doc)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store message"})
 		return
+	}
+	idHex := ""
+	if oid, ok := res.InsertedID.(bson.ObjectID); ok {
+		idHex = oid.Hex()
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "stored",
 		"trace_id": getTraceIDFromContext(ctx),
 		"endpoint": "MongoDB",
+		"id":       idHex,
+	})
+}
+
+// MongoIDRequest is used for update/read/delete by document _id.
+type MongoIDRequest struct {
+	ID string `json:"id" binding:"required"`
+}
+
+// MongoUpdateRequest adds optional text for update.
+type MongoUpdateRequest struct {
+	ID   string `json:"id" binding:"required"`
+	Text string `json:"text"`
+}
+
+func handleMessageMongoUpdate(c *gin.Context) {
+	var req MongoUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	oid, err := bson.ObjectIDFromHex(req.ID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	ctx := c.Request.Context()
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	update := bson.M{"$set": bson.M{"text": req.Text, "updatedAt": time.Now()}}
+	res, err := coll.UpdateOne(ctx, bson.M{"_id": oid}, update)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update"})
+		return
+	}
+	if res.MatchedCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "updated",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "MongoDB Update",
+	})
+}
+
+func handleMessageMongoRead(c *gin.Context) {
+	var req MongoIDRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	oid, err := bson.ObjectIDFromHex(req.ID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	ctx := c.Request.Context()
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	var doc struct {
+		Text      string    `bson:"text"`
+		CreatedAt time.Time `bson:"createdAt,omitempty"`
+		UpdatedAt time.Time `bson:"updatedAt,omitempty"`
+	}
+	sr := coll.FindOne(ctx, bson.M{"_id": oid})
+	if err := sr.Decode(&doc); err != nil {
+		if err == mongo.ErrNoDocuments {
+			c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "read",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "MongoDB Read",
+		"text":     doc.Text,
+	})
+}
+
+func handleMessageMongoDelete(c *gin.Context) {
+	var req MongoIDRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	oid, err := bson.ObjectIDFromHex(req.ID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	ctx := c.Request.Context()
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	res, err := coll.DeleteOne(ctx, bson.M{"_id": oid})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete"})
+		return
+	}
+	if res.DeletedCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "deleted",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "MongoDB Delete",
 	})
 }

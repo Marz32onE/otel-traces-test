@@ -17,7 +17,7 @@ import { tracer } from "./tracing";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8088";
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8082";
 
-type LastTrace = { traceId: string; endpoint: string } | null;
+type LastTrace = { traceId: string; endpoint: string; id?: string } | null;
 
 /** Parse trace ID from W3C traceparent (version-traceId-spanId-flags). */
 function traceIdFromTraceparent(traceparent: string): string | null {
@@ -30,6 +30,7 @@ export default function App() {
   const [messages, setMessages] = useState<string[]>([]);
   const [wsStatus, setWsStatus] = useState("Connecting...");
   const [lastTrace, setLastTrace] = useState<LastTrace>(null);
+  const [lastMongoId, setLastMongoId] = useState<string | null>(null);
   const [lastReceivedTraceId, setLastReceivedTraceId] = useState<string | null>(
     null
   );
@@ -98,15 +99,21 @@ export default function App() {
     };
   }
 
-  async function sendToEndpoint(endpoint: string, spanName: string) {
+  async function sendToEndpoint(
+    endpoint: string,
+    spanName: string,
+    body?: { text?: string; id?: string }
+  ) {
     const text = inputText.trim();
-    if (!text) return;
+    const payload: { text?: string; id?: string } =
+      body && "id" in body ? body : text ? { text } : {};
+    if (Object.keys(payload).length === 0) return;
 
     const url = `${API_URL}${endpoint}`;
     const span = tracer.startSpan(spanName, {
       kind: SpanKind.CLIENT,
       attributes: {
-        "message.content": text,
+        "message.content": "text" in payload ? payload.text ?? "" : "",
         "http.request.method": "POST",
         "url.full": url,
       },
@@ -114,31 +121,34 @@ export default function App() {
     const ctx = trace.setSpan(context.active(), span);
 
     try {
-      // Faro TracingInstrumentation injects traceparent/tracestate into fetch automatically when run inside this context
       const res = await context.with(ctx, () =>
         fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify(payload),
         })
       );
       span.setAttribute("http.response.status_code", res.status);
-      if (!res.ok) throw new Error("Failed to send");
+      const data = (await res.json()) as {
+        trace_id?: string;
+        endpoint?: string;
+        id?: string;
+        text?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Request failed");
+      }
       span.setStatus({ code: SpanStatusCode.OK });
-      setInputText("");
-      try {
-        const data = (await res.json()) as {
-          trace_id?: string;
-          endpoint?: string;
-        };
-        if (data.trace_id) {
-          setLastTrace({
-            traceId: data.trace_id,
-            endpoint: data.endpoint ?? endpoint,
-          });
-        }
-      } catch {
-        /* ignore */
+      if ("text" in payload && payload.text) setInputText("");
+      if (data.trace_id) {
+        setLastTrace({
+          traceId: data.trace_id,
+          endpoint: data.endpoint ?? endpoint,
+          id: data.id,
+        });
+        if (data.id) setLastMongoId(data.id);
+        if (data.endpoint === "MongoDB Delete") setLastMongoId(null);
       }
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
@@ -197,9 +207,46 @@ export default function App() {
           onClick={() =>
             sendToEndpoint("/api/message-mongo", "send-message-mongo")
           }
-          title="經 API 寫入 MongoDB，由 dbwatcher 監聽並轉發至 NATS JetStream"
+          title="經 API 寫入 MongoDB（Insert），由 dbwatcher 監聽並轉發至 NATS JetStream"
         >
           送出（MongoDB）
+        </button>
+        <button
+          style={{ ...styles.button, ...styles.buttonMongo }}
+          disabled={!lastMongoId}
+          onClick={() =>
+            sendToEndpoint("/api/message-mongo-update", "send-message-mongo-update", {
+              id: lastMongoId!,
+              text: inputText.trim() || "(updated)",
+            })
+          }
+          title="以最後一筆 MongoDB 插入的 id 更新文件（Update），會更換 _oteltrace"
+        >
+          MongoDB 更新
+        </button>
+        <button
+          style={{ ...styles.button, ...styles.buttonMongo }}
+          disabled={!lastMongoId}
+          onClick={() =>
+            sendToEndpoint("/api/message-mongo-read", "send-message-mongo-read", {
+              id: lastMongoId!,
+            })
+          }
+          title="以最後一筆 id 讀取文件（Read），span link 至文件內 _oteltrace"
+        >
+          MongoDB 讀取
+        </button>
+        <button
+          style={{ ...styles.button, ...styles.buttonMongo }}
+          disabled={!lastMongoId}
+          onClick={() =>
+            sendToEndpoint("/api/message-mongo-delete", "send-message-mongo-delete", {
+              id: lastMongoId!,
+            })
+          }
+          title="以最後一筆 id 刪除文件（Delete），metadata 一併刪除"
+        >
+          MongoDB 刪除
         </button>
       </div>
       <div style={styles.traceRow}>
@@ -209,9 +256,18 @@ export default function App() {
             <br />
             <code
               style={styles.traceId}
-              title="在 Grafana/Tempo 用此 Trace ID 查詢，可看到 Frontend → API → Producer → Worker Consumer → WS 串聯"
+              title="在 Grafana/Tempo 用此 Trace ID 查詢，可看到 Frontend → API → Mongo/dbwatcher 串聯"
             >
               {lastTrace.traceId}
+            </code>
+          </div>
+        )}
+        {lastMongoId && (
+          <div style={styles.traceVerify}>
+            <strong>Mongo 文件 ID（供更新/讀取/刪除）</strong>
+            <br />
+            <code style={styles.traceId} title="最後一筆 MongoDB 插入回傳的 id">
+              {lastMongoId}
             </code>
           </div>
         )}
@@ -290,6 +346,9 @@ const styles: Record<string, CSSProperties> = {
   },
   buttonTertiary: {
     backgroundColor: "#b45309",
+  },
+  buttonMongo: {
+    backgroundColor: "#6b21a8",
   },
   textarea: {
     width: "100%",

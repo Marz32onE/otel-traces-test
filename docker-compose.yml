@@ -14,6 +14,17 @@ services:
       retries: 18
       start_period: 45s
 
+  mongo-express:
+    image: mongo-express:latest
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017
+      ME_CONFIG_BASICAUTH: "false"
+    ports:
+      - "3002:8081"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
   nats:
     image: nats:alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
