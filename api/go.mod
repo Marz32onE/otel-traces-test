@@ -1,6 +1,6 @@
 module github.com/Marz32onE/otel-traces-test/api
 
-go 1.25.0
+go 1.26
 
 require (
 	github.com/Marz32onE/mongodbtrace v0.0.0

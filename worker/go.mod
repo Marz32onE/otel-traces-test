@@ -1,6 +1,6 @@
 module github.com/Marz32onE/otel-traces-test/worker
 
-go 1.25.0
+go 1.26
 
 require (
 	github.com/Marz32onE/natstrace v0.1.4
