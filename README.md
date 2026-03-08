@@ -58,11 +58,11 @@ API and Worker (Go) can send traces to Tempo via gRPC. The **browser** must use 
 
 | Service          | Tech                     | Purpose                                                                                                                                 | Port                                   |
 |------------------|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------|
-| **Frontend**     | React 18 + TS + Vite     | UI: send message, receive via WebSocket; `send-message` and `receive message` spans; three buttons (JetStream / Core / MongoDB)           | `3000`                                 |
-| **API**          | Go (Gin)                 | Three endpoints: `POST /api/message` (JetStream), `POST /api/message-core` (Core), `POST /api/message-mongo` (MongoDB); returns `trace_id` | `8088`                                 |
+| **Frontend**     | React 18 + TS + Vite     | UI: two groups (NATS: JetStream/Core; MongoDB: Insert/Update/Read/Delete with editable id). Shared results area at bottom: messages from WebSocket (Worker monitoring NATS). Trace flow hint per group. | `3000`                                 |
+| **API**          | Go (Gin)                 | Endpoints: `POST /api/message` (JetStream), `POST /api/message-core` (Core), `POST /api/message-mongo` (MongoDB Insert), `...-mongo-update`, `...-mongo-read`, `...-mongo-delete`; returns `trace_id` | `8088`                                 |
 | **Worker**       | Go (gorilla/websocket)   | JetStream (`messages.new`, `messages.db`) and Core Subscribe; broadcasts **traceparent/tracestate + body + api** as JSON over WebSocket  | `8082`                                 |
-| **MongoDB**      | Mongo 7 (replica set)    | Stores `message-mongo` payloads; dbwatcher uses change stream (replica set required)                                                    | `27017`                                |
-| **dbwatcher**    | Go + mongo-driver        | Watches `messaging.messages` inserts; forwards to NATS JetStream topic `messages.db`; Worker subscribes and broadcasts                  | no public port                         |
+| **MongoDB**      | Mongo 7 (replica set)    | Stores `messaging.messages`; mongotrace injects `_oteltrace` on write. dbwatcher uses change stream (replica set required).             | `27017`                                |
+| **dbwatcher**    | Go + mongo-driver        | Watches `messaging.messages` **CRUD** (insert, update, replace, delete); forwards to NATS JetStream `messages.db` (insert/update/replace: doc text; delete: `{"op":"delete","id":"..."}`). Worker subscribes and broadcasts. | no public port                         |
 | **NATS**         | NATS Alpine + JetStream  | Message queue; healthcheck uses `wget` (alpine)                                                                                         | `4222` (client), `8222` (monitoring)   |
 | **OTel Collector** | OTel Collector Contrib | Receives gRPC/HTTP OTLP, forwards to Tempo; HTTP endpoint has CORS for browser                                                          | `4317` (gRPC), `4318` (HTTP)           |
 | **Tempo**        | Grafana Tempo 2.9.0      | Trace backend (**pinned 2.9.0**; v2.10+ incompatible)                                                                                    | `3200`                                 |
@@ -72,12 +72,12 @@ API and Worker (Go) can send traces to Tempo via gRPC. The **browser** must use 
 
 ## Message flow
 
-1. User enters a message and clicks **Send (JetStream)**, **Send (Core NATS)**, or **Send (MongoDB)** (or Enter for JetStream).
-2. Frontend creates `send-message-jetstream` / `send-message-core` / `send-message-mongo` span (CLIENT), propagates via `traceparent`/`tracestate` headers, and sends HTTP POST to API.
-3. API’s `otelgin` continues the trace; **JetStream** path uses `jetstreamtrace.Publish`; **Core** uses `natstrace.Publish`; **MongoDB** path writes to `messaging.messages` and returns `trace_id`.
-4. **MongoDB path:** dbwatcher watches the collection’s change stream (insert only); on new doc it publishes to JetStream topic `messages.db`. Worker subscribes and, as with JetStream/Core, broadcasts **traceparent, tracestate, body, api** (api = `"DB"`) over WebSocket.
-5. **JetStream/Core:** Worker receives via JetStream (Consume/Messages) or Core Subscribe; `natstrace`/`jetstreamtrace` extract trace from headers, create receive span, and broadcast **traceparent, tracestate, body, api** over WebSocket.
-6. Frontend parses WebSocket JSON; if `traceparent` and `body` exist, uses `propagation.extract` and creates `receive message` span (CONSUMER), completing the trace. UI shows **Trace verification** and last `trace_id` for Grafana/Tempo.
+1. User enters a message in **NATS** or **MongoDB** group and clicks the relevant button (JetStream, Core NATS, or MongoDB Insert/Update/Read/Delete). MongoDB actions use an editable **ID** field (default `_id`; after Insert the returned id is synced).
+2. Frontend creates the appropriate send span (CLIENT), propagates via `traceparent`/`tracestate` headers, and sends HTTP POST to API.
+3. API’s `otelgin` continues the trace; **JetStream** path uses `jetstreamtrace.Publish`; **Core** uses `natstrace.Publish`; **MongoDB** path uses mongotrace Collection (Insert/Update/Read/Delete) and returns `trace_id`.
+4. **MongoDB path:** dbwatcher watches the collection’s change stream for **all CRUD** (insert, update, replace, delete). On insert/update/replace it publishes the document’s `text` to JetStream topic `messages.db` (with `_oteltrace` when present). On delete it publishes `{"op":"delete","id":"<hex>"}`. Worker subscribes and broadcasts **traceparent, tracestate, body, api** over WebSocket.
+5. **JetStream/Core:** Worker receives via JetStream (Consume/Messages) or Core Subscribe; `natstrace`/`jetstreamtrace` extract trace from headers, create receive span, and broadcast over WebSocket.
+6. Frontend receives via WebSocket; the **shared results area** at the bottom (“由 WebSocket / Worker 監聽 NATS 取出的結果”) shows all messages. If `traceparent` and `body` exist, frontend uses `propagation.extract` and creates `receive message` span (CONSUMER). UI shows **Trace verification** and last `trace_id` for Grafana/Tempo.
 
 ---
 

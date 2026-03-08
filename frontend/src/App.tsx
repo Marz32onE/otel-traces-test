@@ -243,12 +243,12 @@ export default function App() {
               送出（Core NATS）
             </button>
           </div>
-          <textarea
-            style={styles.textarea}
-            readOnly
-            value={messages.join("\n")}
-            placeholder="Messages will appear here..."
-          />
+          <div style={styles.traceFlow}>
+            <span style={styles.traceFlowLabel}>Trace 經過：</span>
+            <span style={styles.traceFlowPath}>
+              Frontend → API → NATS (JetStream/Core) → Worker → WebSocket
+            </span>
+          </div>
         </div>
 
         {/* Right: MongoDB */}
@@ -338,13 +338,25 @@ export default function App() {
               刪除
             </button>
           </div>
-          <textarea
-            style={styles.textarea}
-            readOnly
-            value={messages.join("\n")}
-            placeholder="Messages will appear here..."
-          />
+          <div style={styles.traceFlow}>
+            <span style={styles.traceFlowLabel}>Trace 經過：</span>
+            <span style={styles.traceFlowPath}>
+              Frontend → API → MongoDB → dbwatcher → NATS → Worker → WebSocket
+            </span>
+          </div>
         </div>
+      </div>
+
+      <div style={styles.resultsSection}>
+        <h3 style={styles.resultsTitle}>
+          由 WebSocket / Worker 監聽 NATS 取出的結果
+        </h3>
+        <textarea
+          style={styles.resultsTextarea}
+          readOnly
+          value={messages.join("\n")}
+          placeholder="訊息會經 Worker 從 NATS 訂閱後透過 WebSocket 送達並顯示於此..."
+        />
       </div>
 
       <div style={styles.traceRow}>
@@ -473,9 +485,38 @@ const styles: Record<string, CSSProperties> = {
   buttonMongo: {
     backgroundColor: "#6b21a8",
   },
-  textarea: {
+  traceFlow: {
+    marginTop: "12px",
+    padding: "8px 10px",
+    fontSize: "12px",
+    background: "#eee",
+    borderRadius: "4px",
+    borderLeft: "3px solid #4f46e5",
+  },
+  traceFlowLabel: {
+    fontWeight: "bold" as const,
+    marginRight: "6px",
+  },
+  traceFlowPath: {
+    color: "#333",
+  },
+  resultsSection: {
+    marginTop: "24px",
+    padding: "16px",
+    border: "1px solid #ccc",
+    borderRadius: "8px",
+    background: "#f9f9f9",
+  },
+  resultsTitle: {
+    marginTop: 0,
+    marginBottom: "10px",
+    fontSize: "14px",
+    color: "#555",
+    fontWeight: "bold" as const,
+  },
+  resultsTextarea: {
     width: "100%",
-    height: "220px",
+    height: "260px",
     padding: "8px 12px",
     fontSize: "14px",
     border: "1px solid #ccc",
