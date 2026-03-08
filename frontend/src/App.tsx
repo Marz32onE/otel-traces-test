@@ -22,17 +22,21 @@ type LastTrace = { traceId: string; endpoint: string; id?: string } | null;
 /** Parse trace ID from W3C traceparent (version-traceId-spanId-flags). */
 function traceIdFromTraceparent(traceparent: string): string | null {
   const parts = traceparent.trim().split("-");
-  return parts.length >= 2 ? parts[1] ?? null : null;
+  return parts.length >= 2 ? (parts[1] ?? null) : null;
 }
 
+const DEFAULT_MONGO_ID = "_id";
+
 export default function App() {
-  const [inputText, setInputText] = useState("");
+  const [natsInputText, setNatsInputText] = useState("");
+  const [mongoInputText, setMongoInputText] = useState("");
+  const [mongoId, setMongoId] = useState(DEFAULT_MONGO_ID);
   const [messages, setMessages] = useState<string[]>([]);
   const [wsStatus, setWsStatus] = useState("Connecting...");
   const [lastTrace, setLastTrace] = useState<LastTrace>(null);
   const [lastMongoId, setLastMongoId] = useState<string | null>(null);
   const [lastReceivedTraceId, setLastReceivedTraceId] = useState<string | null>(
-    null
+    null,
   );
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,18 +106,22 @@ export default function App() {
   async function sendToEndpoint(
     endpoint: string,
     spanName: string,
-    body?: { text?: string; id?: string }
+    body?: { text?: string; id?: string },
   ) {
-    const text = inputText.trim();
-    const payload: { text?: string; id?: string } =
-      body && "id" in body ? body : text ? { text } : {};
-    if (Object.keys(payload).length === 0) return;
+    const payload: { text?: string; id?: string } = body ?? {};
+    if (!("id" in payload) && !("text" in payload)) return;
+    const needsText = [
+      "/api/message",
+      "/api/message-core",
+      "/api/message-mongo",
+    ].includes(endpoint);
+    if (needsText && (!payload.text || !payload.text.trim())) return;
 
     const url = `${API_URL}${endpoint}`;
     const span = tracer.startSpan(spanName, {
       kind: SpanKind.CLIENT,
       attributes: {
-        "message.content": "text" in payload ? payload.text ?? "" : "",
+        "message.content": "text" in payload ? (payload.text ?? "") : "",
         "http.request.method": "POST",
         "url.full": url,
       },
@@ -126,7 +134,7 @@ export default function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
-        })
+        }),
       );
       span.setAttribute("http.response.status_code", res.status);
       const data = (await res.json()) as {
@@ -140,14 +148,28 @@ export default function App() {
         throw new Error(data.error ?? "Request failed");
       }
       span.setStatus({ code: SpanStatusCode.OK });
-      if ("text" in payload && payload.text) setInputText("");
+      if (
+        "text" in payload &&
+        payload.text &&
+        (endpoint === "/api/message" || endpoint === "/api/message-core")
+      )
+        setNatsInputText("");
+      if (
+        "text" in payload &&
+        payload.text &&
+        endpoint === "/api/message-mongo"
+      )
+        setMongoInputText("");
       if (data.trace_id) {
         setLastTrace({
           traceId: data.trace_id,
           endpoint: data.endpoint ?? endpoint,
           id: data.id,
         });
-        if (data.id) setLastMongoId(data.id);
+        if (data.id) {
+          setLastMongoId(data.id);
+          setMongoId(data.id); // sync id field for update/read/delete
+        }
         if (data.endpoint === "MongoDB Delete") setLastMongoId(null);
       }
     } catch (err) {
@@ -160,9 +182,18 @@ export default function App() {
     }
   }
 
-  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+  function handleNatsKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter")
-      sendToEndpoint("/api/message", "send-message-jetstream");
+      sendToEndpoint("/api/message", "send-message-jetstream", {
+        text: natsInputText.trim(),
+      });
+  }
+
+  function handleMongoKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter")
+      sendToEndpoint("/api/message-mongo", "send-message-mongo", {
+        text: mongoInputText.trim(),
+      });
   }
 
   return (
@@ -171,84 +202,151 @@ export default function App() {
       <p style={styles.status}>
         WebSocket: <strong>{wsStatus}</strong>
       </p>
-      <div style={styles.inputRow}>
-        <input
-          style={styles.input}
-          type="text"
-          placeholder="Enter a message..."
-          value={inputText}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setInputText(e.target.value)
-          }
-          onKeyDown={handleKeyDown}
-        />
+
+      <div style={styles.twoColumns}>
+        {/* Left: NATS */}
+        <div style={styles.panel}>
+          <h2 style={styles.panelTitle}>NATS</h2>
+          <div style={styles.inputRow}>
+            <input
+              style={styles.input}
+              type="text"
+              placeholder="Enter a message..."
+              value={natsInputText}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setNatsInputText(e.target.value)
+              }
+              onKeyDown={handleNatsKeyDown}
+            />
+          </div>
+          <div style={styles.buttonRow}>
+            <button
+              style={styles.button}
+              onClick={() =>
+                sendToEndpoint("/api/message", "send-message-jetstream", {
+                  text: natsInputText.trim(),
+                })
+              }
+              title="JetStream（natstrace 包裝 jetstream pkg）"
+            >
+              送出（JetStream）
+            </button>
+            <button
+              style={{ ...styles.button, ...styles.buttonSecondary }}
+              onClick={() =>
+                sendToEndpoint("/api/message-core", "send-message-core", {
+                  text: natsInputText.trim(),
+                })
+              }
+              title="Core NATS fire-and-go"
+            >
+              送出（Core NATS）
+            </button>
+          </div>
+          <textarea
+            style={styles.textarea}
+            readOnly
+            value={messages.join("\n")}
+            placeholder="Messages will appear here..."
+          />
+        </div>
+
+        {/* Right: MongoDB */}
+        <div style={styles.panel}>
+          <h2 style={styles.panelTitle}>MongoDB</h2>
+          <div style={styles.inputRow}>
+            <input
+              style={styles.input}
+              type="text"
+              placeholder="Enter message text..."
+              value={mongoInputText}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setMongoInputText(e.target.value)
+              }
+              onKeyDown={handleMongoKeyDown}
+            />
+          </div>
+          <div style={styles.idRow}>
+            <label style={styles.idLabel}>ID</label>
+            <input
+              style={styles.idInput}
+              type="text"
+              value={mongoId}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setMongoId(e.target.value || DEFAULT_MONGO_ID)
+              }
+              placeholder={DEFAULT_MONGO_ID}
+              title="文件 _id（更新/讀取/刪除用），預設 trace_test"
+            />
+          </div>
+          <div style={styles.buttonRow}>
+            <button
+              style={{ ...styles.button, ...styles.buttonTertiary }}
+              onClick={() =>
+                sendToEndpoint("/api/message-mongo", "send-message-mongo", {
+                  text: mongoInputText.trim(),
+                })
+              }
+              title="經 API 寫入 MongoDB（Insert），由 dbwatcher 監聽並轉發"
+            >
+              插入
+            </button>
+            <button
+              style={{ ...styles.button, ...styles.buttonMongo }}
+              onClick={() =>
+                sendToEndpoint(
+                  "/api/message-mongo-update",
+                  "send-message-mongo-update",
+                  {
+                    id: mongoId.trim() || DEFAULT_MONGO_ID,
+                    text: mongoInputText.trim() || "(updated)",
+                  },
+                )
+              }
+              title="以指定 id 更新文件（Update），會更換 _oteltrace"
+            >
+              更新
+            </button>
+            <button
+              style={{ ...styles.button, ...styles.buttonMongo }}
+              onClick={() =>
+                sendToEndpoint(
+                  "/api/message-mongo-read",
+                  "send-message-mongo-read",
+                  {
+                    id: mongoId.trim() || DEFAULT_MONGO_ID,
+                  },
+                )
+              }
+              title="以指定 id 讀取文件（Read），span link 至文件內 _oteltrace"
+            >
+              讀取
+            </button>
+            <button
+              style={{ ...styles.button, ...styles.buttonMongo }}
+              onClick={() =>
+                sendToEndpoint(
+                  "/api/message-mongo-delete",
+                  "send-message-mongo-delete",
+                  {
+                    id: mongoId.trim() || DEFAULT_MONGO_ID,
+                  },
+                )
+              }
+              title="以指定 id 刪除文件（Delete）"
+            >
+              刪除
+            </button>
+          </div>
+          <textarea
+            style={styles.textarea}
+            readOnly
+            value={messages.join("\n")}
+            placeholder="Messages will appear here..."
+          />
+        </div>
       </div>
-      <div style={styles.buttonRow}>
-        <button
-          style={styles.button}
-          onClick={() =>
-            sendToEndpoint("/api/message", "send-message-jetstream")
-          }
-          title="JetStream（natstrace 包裝 jetstream pkg）"
-        >
-          送出（JetStream）
-        </button>
-        <button
-          style={{ ...styles.button, ...styles.buttonSecondary }}
-          onClick={() =>
-            sendToEndpoint("/api/message-core", "send-message-core")
-          }
-          title="Core NATS fire-and-go"
-        >
-          送出（Core NATS fire-and-go）
-        </button>
-        <button
-          style={{ ...styles.button, ...styles.buttonTertiary }}
-          onClick={() =>
-            sendToEndpoint("/api/message-mongo", "send-message-mongo")
-          }
-          title="經 API 寫入 MongoDB（Insert），由 dbwatcher 監聽並轉發至 NATS JetStream"
-        >
-          送出（MongoDB）
-        </button>
-        <button
-          style={{ ...styles.button, ...styles.buttonMongo }}
-          disabled={!lastMongoId}
-          onClick={() =>
-            sendToEndpoint("/api/message-mongo-update", "send-message-mongo-update", {
-              id: lastMongoId!,
-              text: inputText.trim() || "(updated)",
-            })
-          }
-          title="以最後一筆 MongoDB 插入的 id 更新文件（Update），會更換 _oteltrace"
-        >
-          MongoDB 更新
-        </button>
-        <button
-          style={{ ...styles.button, ...styles.buttonMongo }}
-          disabled={!lastMongoId}
-          onClick={() =>
-            sendToEndpoint("/api/message-mongo-read", "send-message-mongo-read", {
-              id: lastMongoId!,
-            })
-          }
-          title="以最後一筆 id 讀取文件（Read），span link 至文件內 _oteltrace"
-        >
-          MongoDB 讀取
-        </button>
-        <button
-          style={{ ...styles.button, ...styles.buttonMongo }}
-          disabled={!lastMongoId}
-          onClick={() =>
-            sendToEndpoint("/api/message-mongo-delete", "send-message-mongo-delete", {
-              id: lastMongoId!,
-            })
-          }
-          title="以最後一筆 id 刪除文件（Delete），metadata 一併刪除"
-        >
-          MongoDB 刪除
-        </button>
-      </div>
+
       <div style={styles.traceRow}>
         {lastTrace && (
           <div style={styles.traceVerify}>
@@ -256,7 +354,7 @@ export default function App() {
             <br />
             <code
               style={styles.traceId}
-              title="在 Grafana/Tempo 用此 Trace ID 查詢，可看到 Frontend → API → Mongo/dbwatcher 串聯"
+              title="在 Grafana/Tempo 用此 Trace ID 查詢"
             >
               {lastTrace.traceId}
             </code>
@@ -264,50 +362,57 @@ export default function App() {
         )}
         {lastMongoId && (
           <div style={styles.traceVerify}>
-            <strong>Mongo 文件 ID（供更新/讀取/刪除）</strong>
+            <strong>最後插入的 Mongo ID</strong>
             <br />
-            <code style={styles.traceId} title="最後一筆 MongoDB 插入回傳的 id">
-              {lastMongoId}
-            </code>
+            <code style={styles.traceId}>{lastMongoId}</code>
           </div>
         )}
         {lastReceivedTraceId && (
           <div style={styles.traceVerify}>
             <strong>最後收到訊息的 Trace ID</strong>
             <br />
-            <code
-              style={styles.traceId}
-              title="此訊息經 WebSocket 送達時所帶的 traceparent 中的 Trace ID，可與上方比對是否為同一條 trace"
-            >
-              {lastReceivedTraceId}
-            </code>
+            <code style={styles.traceId}>{lastReceivedTraceId}</code>
           </div>
         )}
       </div>
-      <textarea
-        style={styles.textarea}
-        readOnly
-        value={messages.join("\n")}
-        placeholder="Messages will appear here..."
-      />
     </div>
   );
 }
 
 const styles: Record<string, CSSProperties> = {
   container: {
-    maxWidth: "600px",
+    maxWidth: "1000px",
     margin: "40px auto",
     fontFamily: "sans-serif",
     padding: "0 16px",
   },
   title: { marginBottom: "8px" },
   status: { marginBottom: "16px", color: "#555" },
+  twoColumns: {
+    display: "flex",
+    flexDirection: "row" as const,
+    gap: "24px",
+    flexWrap: "wrap" as const,
+  },
+  panel: {
+    flex: "1 1 400px",
+    minWidth: "280px",
+    padding: "16px",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    background: "#fafafa",
+  },
+  panelTitle: {
+    marginTop: 0,
+    marginBottom: "12px",
+    fontSize: "18px",
+  },
   traceRow: {
     display: "flex",
     flexDirection: "row" as const,
     flexWrap: "wrap" as const,
     gap: "12px",
+    marginTop: "16px",
     marginBottom: "12px",
   },
   traceVerify: {
@@ -319,10 +424,28 @@ const styles: Record<string, CSSProperties> = {
   },
   traceId: { fontSize: "12px", userSelect: "all" as const },
   inputRow: { display: "flex", gap: "8px", marginBottom: "8px" },
+  idRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    marginBottom: "8px",
+  },
+  idLabel: {
+    fontSize: "14px",
+    fontWeight: "bold" as const,
+    minWidth: "24px",
+  },
+  idInput: {
+    flex: 1,
+    padding: "6px 10px",
+    fontSize: "14px",
+    border: "1px solid #ccc",
+    borderRadius: "4px",
+  },
   buttonRow: {
     display: "flex",
     gap: "8px",
-    marginBottom: "16px",
+    marginBottom: "12px",
     flexWrap: "wrap" as const,
   },
   input: {
@@ -352,9 +475,9 @@ const styles: Record<string, CSSProperties> = {
   },
   textarea: {
     width: "100%",
-    height: "300px",
+    height: "220px",
     padding: "8px 12px",
-    fontSize: "15px",
+    fontSize: "14px",
     border: "1px solid #ccc",
     borderRadius: "4px",
     resize: "vertical",

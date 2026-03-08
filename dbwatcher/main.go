@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	natstrace "github.com/Marz32onE/natstrace/natstrace"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -83,14 +85,15 @@ func main() {
 	}
 
 	coll := mongoClient.Database(dbName).Collection(collName)
-	// Match only insert events to forward message text to NATS
-	pipeline := mongo.Pipeline{bson.D{{Key: "$match", Value: bson.D{{Key: "operationType", Value: "insert"}}}}}
+	// Watch all CRUD: insert, update, replace, delete. UpdateLookup so update/replace include fullDocument.
+	opts := options.ChangeStream().SetFullDocument(options.UpdateLookup)
+	pipeline := mongo.Pipeline{} // no $match: receive all operation types
 
 	// No separate Ping: open Watch with retry. Validates server up + change stream (replica set) in one step.
 	var stream *mongo.ChangeStream
 	for i := 0; i < 15; i++ {
 		tryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		stream, err = coll.Watch(tryCtx, pipeline)
+		stream, err = coll.Watch(tryCtx, pipeline, opts)
 		cancel()
 		if err == nil {
 			break
@@ -107,7 +110,7 @@ func main() {
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Println("dbwatcher: watching MongoDB messages, publishing to NATS JetStream subject", subject)
+	log.Println("dbwatcher: watching MongoDB CRUD, publishing to NATS JetStream subject", subject)
 	for {
 		if !stream.Next(sigCtx) {
 			if err := stream.Err(); err != nil {
@@ -116,23 +119,44 @@ func main() {
 			break
 		}
 		var event struct {
-			FullDocument bson.M `bson:"fullDocument"`
+			OperationType string   `bson:"operationType"`
+			FullDocument  bson.M   `bson:"fullDocument"`
+			DocumentKey   bson.M   `bson:"documentKey"`
 		}
 		if err := stream.Decode(&event); err != nil {
 			log.Printf("Decode: %v", err)
 			continue
 		}
-		text, _ := event.FullDocument["text"].(string)
-		if text == "" {
+
+		var payload []byte
+		var pubCtx = sigCtx
+
+		switch event.OperationType {
+		case "insert", "update", "replace":
+			text, _ := event.FullDocument["text"].(string)
+			if text == "" {
+				continue
+			}
+			rawDoc, _ := bson.Marshal(event.FullDocument)
+			pubCtx = mongotrace.ContextFromDocument(sigCtx, rawDoc)
+			payload = []byte(text)
+		case "delete":
+			idStr := ""
+			if id, ok := event.DocumentKey["_id"]; ok {
+				if oid, ok := id.(bson.ObjectID); ok {
+					idStr = oid.Hex()
+				}
+			}
+			payload, _ = json.Marshal(map[string]string{"op": "delete", "id": idStr})
+			// delete has no fullDocument, so no _oteltrace to propagate
+		default:
 			continue
 		}
-		// Propagate trace context from document's _oteltrace so publish span links to API insert span
-		rawDoc, _ := bson.Marshal(event.FullDocument)
-		pubCtx := mongotrace.ContextFromDocument(sigCtx, rawDoc)
-		if _, err := js.Publish(pubCtx, subject, []byte(text)); err != nil {
+
+		if _, err := js.Publish(pubCtx, subject, payload); err != nil {
 			log.Printf("Publish to NATS: %v", err)
 			continue
 		}
-		log.Printf("Forwarded to %s: %s", subject, text)
+		log.Printf("Forwarded to %s [%s]: %s", subject, event.OperationType, string(payload))
 	}
 }
