@@ -5,7 +5,7 @@ import { OtlpHttpTransport } from '@grafana/faro-transport-otlp-http';
 
 const OTEL_COLLECTOR_URL =
   import.meta.env.VITE_OTEL_COLLECTOR_URL || 'http://localhost:4318';
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8081';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8088';
 
 // Allow trace context (traceparent) to be sent to our API (cross-origin when port differs)
 function apiOriginRegex(): RegExp {
@@ -14,7 +14,7 @@ function apiOriginRegex(): RegExp {
     const origin = u.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`^${origin}`);
   } catch {
-    return /localhost:8081/;
+    return /localhost:8088/;
   }
 }
 

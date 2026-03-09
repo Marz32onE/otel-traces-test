@@ -21,7 +21,7 @@ If any step fails, fix and restart from BUILD. Do not skip steps.
 
 ## Project Context (from README)
 
-- **API** (Go, :8081): receives HTTP, publishes to NATS JetStream; two paths: `POST /api/message` (built-in JetStreamContext), `POST /api/message-v2` (jetstream pkg).
+- **API** (Go, :8088): receives HTTP, publishes to NATS JetStream; two paths: `POST /api/message` (built-in JetStreamContext), `POST /api/message-v2` (jetstream pkg).
 - **Worker** (Go, :8082): subscribes to NATS, broadcasts via WebSocket.
 - **Frontend** (:3000): React + OTel; sends traceparent to API; exports OTLP to Collector.
 - **Trace path**: Frontend → API (otelgin + producer span) → OTel Collector → Tempo (:3200). Producer span name is `send <subject>` (e.g. `send messages.new`).
@@ -106,7 +106,7 @@ Run when changes touch **any** of: `api/main.go`, `frontend/src/App.tsx`, `front
 ```bash
 TRACE_ID="deadbeef000000000000000000000001"
 SPAN_ID="1234567890abcdef"
-curl -s http://localhost:8081/api/message -X POST \
+curl -s http://localhost:8088/api/message -X POST \
   -H "Content-Type: application/json" \
   -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" \
   -d '{"text":"skill-verify-test"}'
@@ -116,7 +116,7 @@ curl -s http://localhost:8081/api/message -X POST \
 2. **Optional**: Same for v2 endpoint to confirm both paths work:
 
 ```bash
-curl -s http://localhost:8081/api/message-v2 -X POST \
+curl -s http://localhost:8088/api/message-v2 -X POST \
   -H "Content-Type: application/json" \
   -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" \
   -d '{"text":"skill-verify-v2"}'
@@ -175,14 +175,14 @@ docker compose up -d --build api frontend worker
 # Health
 sleep 3
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/
-curl -s http://localhost:8081/api/message -X POST -H "Content-Type: application/json" -d '{"text":"ok"}'
-curl -s http://localhost:8081/api/message-v2 -X POST -H "Content-Type: application/json" -d '{"text":"ok"}'
-curl -s http://localhost:8081/api/message-core -X POST -H "Content-Type: application/json" -d '{"text":"ok"}'
+curl -s http://localhost:8088/api/message -X POST -H "Content-Type: application/json" -d '{"text":"ok"}'
+curl -s http://localhost:8088/api/message-v2 -X POST -H "Content-Type: application/json" -d '{"text":"ok"}'
+curl -s http://localhost:8088/api/message-core -X POST -H "Content-Type: application/json" -d '{"text":"ok"}'
 
 # E2E trace (then query Tempo after sleep 5)
 TRACE_ID="deadbeef000000000000000000000002"
 SPAN_ID="1234567890abcdef"
-curl -s http://localhost:8081/api/message -X POST -H "Content-Type: application/json" -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" -d '{"text":"e2e"}'
+curl -s http://localhost:8088/api/message -X POST -H "Content-Type: application/json" -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" -d '{"text":"e2e"}'
 sleep 5 && curl -s "http://localhost:3200/api/traces/${TRACE_ID}" | head -c 500
 ```
 

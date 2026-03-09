@@ -19,7 +19,7 @@ spec:
           image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
           ports:
-            - containerPort: 8081
+            - containerPort: 8088
           env:
             - name: NATS_URL
               value: "nats://{{ .Release.Name }}-nats:4222"

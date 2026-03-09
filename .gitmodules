@@ -1,3 +1,6 @@
 [submodule "pkg/natstrace"]
 	path = pkg/natstrace
 	url = https://github.com/Marz32onE/natstrace.git
+[submodule "pkg/mongodbtrace"]
+	path = pkg/mongodbtrace
+	url = https://github.com/Marz32onE/mongodbtrace.git

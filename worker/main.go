@@ -15,10 +15,7 @@ import (
 	nats "github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 var (
@@ -55,7 +52,7 @@ func broadcastWithTrace(ctx context.Context, body []byte, apiName string) {
 	for conn := range clients {
 		if err := conn.WriteMessage(websocket.TextMessage, raw); err != nil {
 			log.Printf("WebSocket write error: %v", err)
-			conn.Close()
+			_ = conn.Close()
 			delete(clients, conn)
 		}
 	}
@@ -71,7 +68,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		clientsMu.Lock()
 		delete(clients, conn)
 		clientsMu.Unlock()
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	clientsMu.Lock()
@@ -89,50 +86,22 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	ctx := context.Background()
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "localhost:4317"
+	if err := natstrace.InitTracer(endpoint,
+		attribute.String("service.name", "worker"),
+		attribute.String("service.version", "0.0.1"),
+	); err != nil {
+		log.Fatalf("InitTracer: %v", err)
 	}
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
-	if err != nil {
-		log.Fatalf("OTLP exporter: %v", err)
-	}
-	res, _ := resource.New(ctx,
-		resource.WithAttributes(
-			attribute.String("service.name", "worker"),
-			attribute.String("service.version", "0.0.1"),
-		),
-	)
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-	)
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = tp.Shutdown(shutdownCtx)
-	}()
-
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
+	defer natstrace.ShutdownTracer()
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
 		natsURL = nats.DefaultURL
 	}
-
-	prop := otel.GetTextMapPropagator()
+	var err error
 	var natsConn *natstrace.Conn
 	for i := 0; i < 10; i++ {
-		natsConn, err = natstrace.Connect(natsURL, nil,
-			natstrace.WithTracerProvider(tp),
-			natstrace.WithPropagator(prop),
-		)
+		natsConn, err = natstrace.Connect(natsURL, nil)
 		if err == nil {
 			break
 		}
@@ -191,12 +160,12 @@ func main() {
 	defer iter.Stop()
 	go func() {
 		for {
-			ctx, msg, err := iter.Next()
-			if err != nil {
+			msgCtx, msg, nextErr := iter.Next()
+			if nextErr != nil {
 				return
 			}
 			log.Printf("[Messages] received: %s", string(msg.Data()))
-			broadcastWithTrace(ctx, msg.Data(), "Messages")
+			broadcastWithTrace(msgCtx, msg.Data(), "Messages")
 			_ = msg.Ack()
 		}
 	}()
@@ -212,8 +181,8 @@ func main() {
 	}
 	go func() {
 		for {
-			batch, err := consFetch.Fetch(5)
-			if err != nil {
+			batch, fetchErr := consFetch.Fetch(5)
+			if fetchErr != nil {
 				continue
 			}
 			for m := range batch.MessagesWithContext() {
@@ -235,6 +204,25 @@ func main() {
 	if err != nil {
 		log.Fatalf("Subscribe core: %v", err)
 	}
+
+	// 5) JetStream messages from dbwatcher (MongoDB change stream → messages.db)
+	consDB, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
+		Durable:       "worker-db",
+		FilterSubject: "messages.db",
+		AckPolicy:     jetstreamtrace.AckExplicitPolicy,
+	})
+	if err != nil {
+		log.Fatalf("CreateOrUpdateConsumer(worker-db): %v", err)
+	}
+	ccDB, err := consDB.Consume(func(ctx context.Context, msg jetstreamtrace.Msg) {
+		log.Printf("[DB] received: %s", string(msg.Data()))
+		broadcastWithTrace(ctx, msg.Data(), "DB")
+		_ = msg.Ack()
+	})
+	if err != nil {
+		log.Fatalf("Consume(worker-db): %v", err)
+	}
+	defer ccDB.Stop()
 
 	http.HandleFunc("/ws", wsHandler)
 	log.Println("WebSocket worker starting on :8082")

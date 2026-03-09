@@ -1,15 +1,41 @@
-# Docker Compose command (default: docker compose v2)
-COMPOSE_CMD ?= podman compose
+# --- Auto-detected (override with make VAR=value) ---
 
-# Kind: assume cluster already exists (kind create cluster + kubectl + helm)
-KIND_CLUSTER ?= kind
+# Compose: docker compose | podman-compose | podman compose
+COMPOSE_CMD ?= $(shell \
+	if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then \
+		echo "docker compose"; \
+	elif command -v podman-compose >/dev/null 2>&1; then \
+		echo "podman-compose"; \
+	elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then \
+		echo "podman compose"; \
+	else \
+		echo "docker compose"; \
+	fi)
+
+# Image builder for kind-build: derive from COMPOSE_CMD (docker or podman)
+DOCKER_CMD ?= $(shell \
+	first=$$(echo $(COMPOSE_CMD) | cut -d' ' -f1); \
+	if [ "$$first" = "podman-compose" ]; then echo podman; else echo $$first; fi)
+
+# Kind cluster name: use single existing cluster, else "kind"
+KIND_CLUSTER ?= $(shell \
+	clusters=$$(kind get clusters 2>/dev/null); \
+	if [ "$$(echo $$clusters | wc -w)" = "1" ] && [ -n "$$clusters" ]; then echo $$clusters; else echo "kind"; fi)
+
+# Helm (project-specific, rarely overridden)
 HELM_RELEASE ?= otel-traces-test
 HELM_NAMESPACE ?= otel
-# Use docker or podman for building images (e.g. DOCKER_CMD=podman)
-DOCKER_CMD ?= docker
 
-.PHONY: up down clean restart build logs ps help
+.PHONY: up down clean restart build logs ps help detect verify-trace up-verify
 .PHONY: kind-build kind-install kind-uninstall kind-verify kind-up kind-down
+
+# Show all auto-detected variables
+detect:
+	@echo "COMPOSE_CMD  = $(COMPOSE_CMD)"
+	@echo "DOCKER_CMD   = $(DOCKER_CMD)"
+	@echo "KIND_CLUSTER = $(KIND_CLUSTER)"
+	@echo "HELM_RELEASE = $(HELM_RELEASE)"
+	@echo "HELM_NAMESPACE = $(HELM_NAMESPACE)"
 
 # Start all services in background (build images if needed)
 up:
@@ -38,20 +64,33 @@ ps:
 logs:
 	$(COMPOSE_CMD) logs -f $(SVC)
 
+# Check whole trace propagation path (stack must be up: make up first)
+verify-trace:
+	@bash scripts/check-trace-propagation.sh
+
+# Bring up stack then run trace propagation check
+up-verify: up
+	@echo "Waiting 25s for services to be ready..."
+	@sleep 25
+	@bash scripts/check-trace-propagation.sh
+
 help:
 	@echo "Usage:"
-	@echo "  make up      - Start all services (docker compose up -d --build)"
-	@echo "  make down    - Stop all services"
-	@echo "  make clean   - Stop and remove containers + volumes"
+	@echo "  make up     - Start all services ($(COMPOSE_CMD) up -d --build)"
+	@echo "  make down   - Stop all services"
+	@echo "  make clean  - Stop and remove containers + volumes"
 	@echo "  make restart - down then up"
-	@echo "  make build   - Build images only"
-	@echo "  make ps      - Show service status"
-	@echo "  make logs    - Follow logs (optional: make logs SVC=api)"
-	@echo "  make help    - This message"
+	@echo "  make build  - Build images only"
+	@echo "  make ps     - Show service status"
+	@echo "  make logs         - Follow logs (optional: make logs SVC=api)"
+	@echo "  make verify-trace  - Check trace propagation (API→Tempo); run after 'make up'"
+	@echo "  make up-verify    - make up, wait, then verify-trace"
+	@echo "  make detect       - Show auto-detected COMPOSE_CMD, DOCKER_CMD, KIND_CLUSTER"
+	@echo "  make help         - This message"
 	@echo ""
-	@echo "Kind (cluster must exist):"
-	@echo "  make kind-build     - Build api/worker/frontend images and load into kind"
-	@echo "  make kind-install   - Helm upgrade --install $(HELM_RELEASE) charts/otel-traces-test -n $(HELM_NAMESPACE)"
+	@echo "Kind (cluster must exist, KIND_CLUSTER=$(KIND_CLUSTER)):"
+	@echo "  make kind-build     - Build images with $(DOCKER_CMD) and load into kind"
+	@echo "  make kind-install   - Helm upgrade --install $(HELM_RELEASE) ./charts/otel-traces-test -n $(HELM_NAMESPACE)"
 	@echo "  make kind-uninstall - Helm uninstall $(HELM_RELEASE) -n $(HELM_NAMESPACE)"
 	@echo "  make kind-up        - kind-build + kind-install"
 	@echo "  make kind-down      - kind-uninstall"
@@ -62,7 +101,7 @@ kind-build:
 	$(DOCKER_CMD) build -t localhost/otel-traces-test-api:latest -f api/Dockerfile .
 	$(DOCKER_CMD) build -t localhost/otel-traces-test-worker:latest -f worker/Dockerfile .
 	$(DOCKER_CMD) build -t localhost/otel-traces-test-frontend:latest \
-		--build-arg VITE_API_URL=http://localhost:8081 \
+		--build-arg VITE_API_URL=http://localhost:8088 \
 		--build-arg VITE_WS_URL=ws://localhost:8082 \
 		--build-arg VITE_OTEL_COLLECTOR_URL=http://localhost:4318 \
 		-f frontend/Dockerfile ./frontend
@@ -86,6 +125,6 @@ kind-down: kind-uninstall
 kind-verify:
 	kubectl wait --for=condition=ready pod -l app=nats -n $(HELM_NAMESPACE) --timeout=120s
 	kubectl wait --for=condition=ready pod -l app=api -n $(HELM_NAMESPACE) --timeout=120s
-	@kubectl port-forward -n $(HELM_NAMESPACE) svc/$(HELM_RELEASE)-api 8081:8081 & PID=$$!; \
-	sleep 3; curl -s -X POST http://localhost:8081/api/message -H "Content-Type: application/json" -d '{"text":"kind-verify"}'; \
+	@kubectl port-forward -n $(HELM_NAMESPACE) svc/$(HELM_RELEASE)-api 8088:8088 & PID=$$!; \
+	sleep 3; curl -s -X POST http://localhost:8088/api/message -H "Content-Type: application/json" -d '{"text":"kind-verify"}'; \
 	kill $$PID 2>/dev/null || true

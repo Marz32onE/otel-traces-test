@@ -33,7 +33,7 @@ SPAN_ID="fe00000000000001"
 NOW=$(python3 -c "import time; print(int(time.time() * 1e9))")
 
 # Send API request with traceparent
-curl -s http://localhost:8081/api/message -X POST \
+curl -s http://localhost:8088/api/message -X POST \
   -H "Content-Type: application/json" \
   -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" \
   -d '{"text":"debug-test"}'

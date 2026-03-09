@@ -7,87 +7,49 @@ import (
 	"os"
 	"time"
 
+	"github.com/Marz32onE/mongodbtrace/mongotrace"
 	"github.com/Marz32onE/natstrace/jetstreamtrace"
 	natstrace "github.com/Marz32onE/natstrace/natstrace"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	nats "github.com/nats-io/nats.go"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
+
+const mongoDBName, mongoColl = "messaging", "messages"
 
 var (
 	natsConn    *natstrace.Conn
 	jetstreamJS jetstreamtrace.JetStream
+	mongoClient *mongotrace.Client
 )
 
-func initTracer() func() {
-	ctx := context.Background()
-
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "localhost:4317"
-	}
-
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
-	if err != nil {
-		log.Fatalf("Failed to create OTLP exporter: %v", err)
-	}
-
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			attribute.String("service.name", "api"),
-			attribute.String("service.version", "0.0.1"),
-		),
-	)
-	if err != nil {
-		log.Fatalf("Failed to create resource: %v", err)
-	}
-
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-	)
-
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-
-	return func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		tp.Shutdown(shutdownCtx)
-	}
-}
-
 func main() {
-	shutdown := initTracer()
-	defer shutdown()
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	attrs := []attribute.KeyValue{
+		attribute.String("service.name", "api"),
+		attribute.String("service.version", "0.0.1"),
+	}
+	if err := natstrace.InitTracer(endpoint, attrs); err != nil {
+		log.Fatalf("natstrace.InitTracer: %v", err)
+	}
+	if err := mongotrace.InitTracer(endpoint, attrs); err != nil {
+		log.Fatalf("mongotrace.InitTracer: %v", err)
+	}
+	defer natstrace.ShutdownTracer()
+	defer mongotrace.ShutdownTracer()
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
 		natsURL = nats.DefaultURL
 	}
-
-	prop := otel.GetTextMapPropagator()
-	tp := otel.GetTracerProvider()
 	var err error
 	for i := 0; i < 10; i++ {
-		natsConn, err = natstrace.Connect(natsURL, nil,
-			natstrace.WithTracerProvider(tp),
-			natstrace.WithPropagator(prop),
-		)
+		natsConn, err = natstrace.Connect(natsURL, nil)
 		if err == nil {
 			break
 		}
@@ -112,6 +74,21 @@ func main() {
 	}
 	jetstreamJS = js
 
+	mongoURI := os.Getenv("MONGODB_URI")
+	if mongoURI == "" {
+		mongoURI = "mongodb://localhost:27017"
+	}
+	mongoClient, err = mongotrace.NewClient(mongoURI)
+	if err != nil {
+		log.Fatalf("Failed to connect to MongoDB: %v", err)
+	}
+	defer func() {
+		_ = mongoClient.Disconnect(context.Background())
+	}()
+	if err = mongoClient.Ping(context.Background(), nil); err != nil {
+		log.Fatalf("MongoDB ping: %v", err)
+	}
+
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
@@ -123,11 +100,15 @@ func main() {
 	}))
 	r.Use(otelgin.Middleware("api"))
 
-	r.POST("/api/message", handleMessage)       // JetStream (natstrace)
-	r.POST("/api/message-core", handleMessageCore) // Core NATS fire-and-go
+	r.POST("/api/message", handleMessage)            // JetStream (natstrace)
+	r.POST("/api/message-core", handleMessageCore)   // Core NATS fire-and-go
+	r.POST("/api/message-mongo", handleMessageMongo) // MongoDB Insert
+	r.POST("/api/message-mongo-update", handleMessageMongoUpdate)
+	r.POST("/api/message-mongo-read", handleMessageMongoRead)
+	r.POST("/api/message-mongo-delete", handleMessageMongoDelete)
 
-	log.Println("API server starting on :8081")
-	if err := r.Run(":8081"); err != nil {
+	log.Println("API server starting on :8088")
+	if err := r.Run(":8088"); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }
@@ -176,5 +157,136 @@ func handleMessageCore(c *gin.Context) {
 		"status":   "published",
 		"trace_id": getTraceIDFromContext(ctx),
 		"endpoint": "Core",
+	})
+}
+
+func handleMessageMongo(c *gin.Context) {
+	var req MessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	doc := bson.M{"text": req.Text, "createdAt": time.Now()}
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	res, err := coll.InsertOne(ctx, doc)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store message"})
+		return
+	}
+	idHex := ""
+	if oid, ok := res.InsertedID.(bson.ObjectID); ok {
+		idHex = oid.Hex()
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "stored",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "MongoDB",
+		"id":       idHex,
+	})
+}
+
+// MongoIDRequest is used for update/read/delete by document _id.
+type MongoIDRequest struct {
+	ID string `json:"id" binding:"required"`
+}
+
+// MongoUpdateRequest adds optional text for update.
+type MongoUpdateRequest struct {
+	ID   string `json:"id" binding:"required"`
+	Text string `json:"text"`
+}
+
+func handleMessageMongoUpdate(c *gin.Context) {
+	var req MongoUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	oid, err := bson.ObjectIDFromHex(req.ID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	ctx := c.Request.Context()
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	update := bson.M{"$set": bson.M{"text": req.Text, "updatedAt": time.Now()}}
+	res, err := coll.UpdateOne(ctx, bson.M{"_id": oid}, update)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update"})
+		return
+	}
+	if res.MatchedCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "updated",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "MongoDB Update",
+	})
+}
+
+func handleMessageMongoRead(c *gin.Context) {
+	var req MongoIDRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	oid, err := bson.ObjectIDFromHex(req.ID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	ctx := c.Request.Context()
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	var doc struct {
+		Text      string    `bson:"text"`
+		CreatedAt time.Time `bson:"createdAt,omitempty"`
+		UpdatedAt time.Time `bson:"updatedAt,omitempty"`
+	}
+	sr := coll.FindOne(ctx, bson.M{"_id": oid})
+	if err := sr.Decode(&doc); err != nil {
+		if err == mongo.ErrNoDocuments {
+			c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "read",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "MongoDB Read",
+		"text":     doc.Text,
+	})
+}
+
+func handleMessageMongoDelete(c *gin.Context) {
+	var req MongoIDRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	oid, err := bson.ObjectIDFromHex(req.ID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	ctx := c.Request.Context()
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	res, err := coll.DeleteOne(ctx, bson.M{"_id": oid})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete"})
+		return
+	}
+	if res.DeletedCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "deleted",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "MongoDB Delete",
 	})
 }
