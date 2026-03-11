@@ -10,8 +10,10 @@ import (
 	"github.com/Marz32onE/mongodbtrace/mongotrace"
 	"github.com/Marz32onE/natstrace/jetstreamtrace"
 	natstrace "github.com/Marz32onE/natstrace/natstrace"
+	"github.com/Marz32onE/otelresty"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/go-resty/resty/v2"
 	nats "github.com/nats-io/nats.go"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -23,9 +25,10 @@ import (
 const mongoDBName, mongoColl = "messaging", "messages"
 
 var (
-	natsConn    *natstrace.Conn
-	jetstreamJS jetstreamtrace.JetStream
-	mongoClient *mongotrace.Client
+	natsConn     *natstrace.Conn
+	jetstreamJS  jetstreamtrace.JetStream
+	mongoClient  *mongotrace.Client
+	workerClient *resty.Client
 )
 
 func main() {
@@ -40,8 +43,12 @@ func main() {
 	if err := mongotrace.InitTracer(endpoint, attrs); err != nil {
 		log.Fatalf("mongotrace.InitTracer: %v", err)
 	}
+	if err := otelresty.InitTracer(endpoint, attrs); err != nil {
+		log.Fatalf("otelresty.InitTracer: %v", err)
+	}
 	defer natstrace.ShutdownTracer()
 	defer mongotrace.ShutdownTracer()
+	defer otelresty.ShutdownTracer()
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
@@ -74,6 +81,14 @@ func main() {
 	}
 	jetstreamJS = js
 
+	workerURL := os.Getenv("WORKER_URL")
+	if workerURL == "" {
+		workerURL = "http://worker:8082"
+	}
+	base := resty.New().SetBaseURL(workerURL)
+	otelresty.TraceClient(base)
+	workerClient = base
+
 	mongoURI := os.Getenv("MONGODB_URI")
 	if mongoURI == "" {
 		mongoURI = "mongodb://localhost:27017"
@@ -100,9 +115,10 @@ func main() {
 	}))
 	r.Use(otelgin.Middleware("api"))
 
-	r.POST("/api/message", handleMessage)            // JetStream (natstrace)
-	r.POST("/api/message-core", handleMessageCore)   // Core NATS fire-and-go
-	r.POST("/api/message-mongo", handleMessageMongo) // MongoDB Insert
+	r.POST("/api/message", handleMessage)                  // JetStream (natstrace)
+	r.POST("/api/message-core", handleMessageCore)         // Core NATS fire-and-go
+	r.POST("/api/message-mongo", handleMessageMongo)       // MongoDB Insert
+	r.POST("/api/message-via-worker", handleMessageViaWorker) // HTTP to Worker (otelresty)
 	r.POST("/api/message-mongo-update", handleMessageMongoUpdate)
 	r.POST("/api/message-mongo-read", handleMessageMongoRead)
 	r.POST("/api/message-mongo-delete", handleMessageMongoDelete)
@@ -157,6 +173,30 @@ func handleMessageCore(c *gin.Context) {
 		"status":   "published",
 		"trace_id": getTraceIDFromContext(ctx),
 		"endpoint": "Core",
+	})
+}
+
+// handleMessageViaWorker calls Worker POST /notify via otelresty (HTTP with trace propagation).
+func handleMessageViaWorker(c *gin.Context) {
+	var req MessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	resp, err := workerClient.R().SetContext(ctx).SetBody(gin.H{"text": req.Text}).Post("/notify")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to call worker: " + err.Error()})
+		return
+	}
+	if resp.IsError() {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "worker returned " + resp.Status()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "ok",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "Worker HTTP (otelresty)",
 	})
 }
 

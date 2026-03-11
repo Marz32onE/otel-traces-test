@@ -2,6 +2,7 @@ FROM golang:1.26-alpine AS builder
 WORKDIR /app
 COPY pkg/natstrace ./pkg/natstrace/
 COPY pkg/mongodbtrace ./pkg/mongodbtrace/
+COPY pkg/otelresty ./pkg/otelresty/
 COPY api/go.mod api/go.sum ./api/
 RUN cd api && go mod download
 COPY api/ ./api/

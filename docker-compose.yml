@@ -81,6 +81,7 @@ services:
       - NATS_URL=nats://nats:4222
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-otel-collector:4317}
       - MONGODB_URI=mongodb://mongodb:27017
+      - WORKER_URL=http://worker:8082
     ports:
       - "8088:8088"
     depends_on:

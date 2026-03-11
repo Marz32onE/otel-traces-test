@@ -4,3 +4,11 @@
 [submodule "pkg/mongodbtrace"]
 	path = pkg/mongodbtrace
 	url = https://github.com/Marz32onE/mongodbtrace.git
+[submodule "pkg/otelresty"]
+	path = pkg/otelresty
+	url = https://github.com/Marz32onE/otelresty.git
+	branch = copilot/wrap-resty-client-for-otel-tracing
+[submodule "pkg/otelwebsocket"]
+	path = pkg/otelwebsocket
+	url = https://github.com/Marz32onE/otelwebsocket.git
+	branch = copilot/add-otlp-trace-propagation

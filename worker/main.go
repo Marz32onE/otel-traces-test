@@ -11,38 +11,30 @@ import (
 
 	"github.com/Marz32onE/natstrace/jetstreamtrace"
 	natstrace "github.com/Marz32onE/natstrace/natstrace"
+	"github.com/Marz32onE/otelwebsocket"
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	nats "github.com/nats-io/nats.go"
-	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
 )
 
 var (
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
-	clients   = make(map[*websocket.Conn]bool)
+	clients   = make(map[*otelwebsocket.Conn]bool)
 	clientsMu sync.Mutex
 )
 
-// wsPayload is sent over WebSocket so the frontend can extract trace context and show which consumer delivered the message.
+// wsPayload is the application payload inside the otelwebsocket envelope so the frontend can show body and which consumer delivered the message.
 type wsPayload struct {
-	Traceparent string `json:"traceparent"`
-	Tracestate  string `json:"tracestate,omitempty"`
-	Body        string `json:"body"`
-	Api         string `json:"api,omitempty"` // consumer type postfix for verification, e.g. "Consume", "Messages"
+	Body string `json:"body"`
+	Api  string `json:"api,omitempty"` // consumer type postfix for verification, e.g. "Consume", "Messages"
 }
 
 func broadcastWithTrace(ctx context.Context, body []byte, apiName string) {
-	carrier := make(map[string]string)
-	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(carrier))
-	payload := wsPayload{
-		Traceparent: carrier["traceparent"],
-		Tracestate:  carrier["tracestate"],
-		Body:        string(body),
-		Api:         apiName,
-	}
+	payload := wsPayload{Body: string(body), Api: apiName}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		raw = []byte(payload.Body)
@@ -50,7 +42,7 @@ func broadcastWithTrace(ctx context.Context, body []byte, apiName string) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 	for conn := range clients {
-		if err := conn.WriteMessage(websocket.TextMessage, raw); err != nil {
+		if err := conn.WriteMessage(ctx, websocket.TextMessage, raw); err != nil {
 			log.Printf("WebSocket write error: %v", err)
 			_ = conn.Close()
 			delete(clients, conn)
@@ -58,12 +50,14 @@ func broadcastWithTrace(ctx context.Context, body []byte, apiName string) {
 	}
 }
 
-func wsHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+// wsHandlerGin handles WebSocket upgrade; after Upgrade the connection is hijacked, so we do not use c.JSON.
+func wsHandlerGin(c *gin.Context) {
+	raw, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("Upgrade error: %v", err)
 		return
 	}
+	conn := otelwebsocket.NewConn(raw)
 	defer func() {
 		clientsMu.Lock()
 		delete(clients, conn)
@@ -75,12 +69,28 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	clients[conn] = true
 	clientsMu.Unlock()
 
-	log.Printf("WebSocket client connected: %s", conn.RemoteAddr())
+	log.Printf("WebSocket client connected: %s", raw.RemoteAddr())
 	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
+		if _, _, err := raw.ReadMessage(); err != nil {
 			break
 		}
 	}
+}
+
+// notifyBody is the JSON body for POST /notify (called by API via otelresty).
+type notifyBody struct {
+	Text string `json:"text"`
+}
+
+// notifyHandler handles POST /notify from API (otelresty demo); returns 200 with optional echo.
+func notifyHandler(c *gin.Context) {
+	var req notifyBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	log.Printf("[Notify] received: %s", req.Text)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "text": req.Text})
 }
 
 func main() {
@@ -134,10 +144,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-consume): %v", err)
 	}
-	cc, err := consConsume.Consume(func(ctx context.Context, msg jetstreamtrace.Msg) {
-		log.Printf("[Consume] received: %s", string(msg.Data()))
-		broadcastWithTrace(ctx, msg.Data(), "Consume")
-		_ = msg.Ack()
+	cc, err := consConsume.Consume(func(m jetstreamtrace.MsgWithContext) {
+		log.Printf("[Consume] received: %s", string(m.Data()))
+		broadcastWithTrace(m.Context(), m.Data(), "Consume")
+		_ = m.Ack()
 	})
 	if err != nil {
 		log.Fatalf("Consume: %v", err)
@@ -197,9 +207,9 @@ func main() {
 	}()
 
 	// 4) Core NATS (fire-and-go)
-	_, err = natsConn.Subscribe("messages.core", func(ctx context.Context, msg *nats.Msg) {
-		log.Printf("Received core NATS message: %s", string(msg.Data))
-		broadcastWithTrace(ctx, msg.Data, "Core")
+	_, err = natsConn.Subscribe("messages.core", func(m natstrace.MsgWithContext) {
+		log.Printf("Received core NATS message: %s", string(m.Msg.Data))
+		broadcastWithTrace(m.Context(), m.Msg.Data, "Core")
 	})
 	if err != nil {
 		log.Fatalf("Subscribe core: %v", err)
@@ -214,19 +224,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-db): %v", err)
 	}
-	ccDB, err := consDB.Consume(func(ctx context.Context, msg jetstreamtrace.Msg) {
-		log.Printf("[DB] received: %s", string(msg.Data()))
-		broadcastWithTrace(ctx, msg.Data(), "DB")
-		_ = msg.Ack()
+	ccDB, err := consDB.Consume(func(m jetstreamtrace.MsgWithContext) {
+		log.Printf("[DB] received: %s", string(m.Data()))
+		broadcastWithTrace(m.Context(), m.Data(), "DB")
+		_ = m.Ack()
 	})
 	if err != nil {
 		log.Fatalf("Consume(worker-db): %v", err)
 	}
 	defer ccDB.Stop()
 
-	http.HandleFunc("/ws", wsHandler)
-	log.Println("WebSocket worker starting on :8082")
-	if err := http.ListenAndServe(":8082", nil); err != nil {
+	r := gin.Default()
+	r.Use(otelgin.Middleware("worker"))
+	r.GET("/ws", wsHandlerGin)
+	r.POST("/notify", notifyHandler)
+
+	log.Println("Worker (Gin) starting on :8082")
+	if err := r.Run(":8082"); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }

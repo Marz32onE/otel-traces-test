@@ -5,8 +5,10 @@ go 1.26
 require (
 	github.com/Marz32onE/mongodbtrace v0.0.0
 	github.com/Marz32onE/natstrace v0.1.4
+	github.com/Marz32onE/otelresty v0.0.0
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-gonic/gin v1.11.0
+	github.com/go-resty/resty/v2 v2.17.2
 	github.com/nats-io/nats.go v1.49.0
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.65.0
@@ -17,6 +19,7 @@ require (
 replace (
 	github.com/Marz32onE/mongodbtrace => ../pkg/mongodbtrace
 	github.com/Marz32onE/natstrace => ../pkg/natstrace
+	github.com/Marz32onE/otelresty => ../pkg/otelresty
 )
 
 require (
