@@ -13,7 +13,7 @@ A full-stack example demonstrating **OpenTelemetry distributed tracing**. Users 
 - **Goal:** End-to-end W3C Trace Context propagation: browser → API (HTTP + NATS publish) → Worker (NATS subscribe + WebSocket broadcast) → browser (WebSocket receive and final span).
 - **Stack:** React 18 + TypeScript + Vite (frontend; **Grafana Faro SDK** for trace and W3C propagation), Go + Gin (API), Go + gorilla/websocket (Worker), NATS (JetStream + Core), OpenTelemetry SDK, OTel Collector, Grafana Tempo, Grafana.
 - **Four paths:** **JetStream** (`POST /api/message` → `messages.new` → Worker), **Core NATS** (`POST /api/message-core` → `messages.core` → Worker), **Worker HTTP** (`POST /api/message-via-worker` → API calls Worker `POST /notify` via **otelresty** → trace propagates over HTTP), **MongoDB** (`POST /api/message-mongo` → API writes to Mongo → **dbwatcher** → `messages.db` → Worker). Query by trace ID in Tempo.
-- **Submodules:** `pkg/natstrace` ([natstrace](https://github.com/Marz32onE/natstrace) — OTel wrapper for NATS), `pkg/otelresty` (otelresty — OTel for go-resty HTTP client). Run `git submodule update --init` after clone.
+- **Submodules:** `pkg/natstrace` ([natstrace](https://github.com/Marz32onE/natstrace) — OTel wrapper for NATS). API uses [github.com/dubonzi/otelresty](https://github.com/dubonzi/otelresty) for go-resty (spans + trace propagation). Run `git submodule update --init` after clone.
 - **Build & run:** Docker Compose builds from repo root; `api` and `worker` use root as build context. Use `make up` or `docker compose up --build` (Makefile defaults to `podman compose`; override with `COMPOSE_CMD='docker compose'`).
 - **Config:** `api` and `worker` need `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` to send spans to Tempo; frontend uses `VITE_OTEL_COLLECTOR_URL` for OTLP/HTTP via Collector (CORS) to Tempo.
 
@@ -222,7 +222,6 @@ make clean   # with -v
 ├── frontend/         # React + Vite + Grafana Faro
 ├── pkg/
 │   ├── natstrace/    # Git submodule — NATS OTel (W3C + JetStream/Core)
-│   ├── otelresty/    # OTel for go-resty HTTP client (API → Worker POST /notify)
 │   └── mongodbtrace/ # mongotrace — MongoDB OTel (InitTracer before NewClient)
 ├── charts/otel-traces-test/config/
 ├── grafana/
@@ -247,9 +246,9 @@ make clean   # with -v
 | Path             | Description                                      |
 |------------------|--------------------------------------------------|
 | `pkg/natstrace`  | [natstrace](https://github.com/Marz32onE/natstrace) — NATS OTel; use tag v0.1.4+ |
-| `pkg/otelresty`  | otelresty — OTel for go-resty (HTTP client); API uses it to call Worker. May be in-repo or submodule. |
+| (dependency)     | [dubonzi/otelresty](https://github.com/dubonzi/otelresty) — OTel for go-resty; API uses it for HTTP client spans + propagation to Worker. |
 
-`api` uses `replace github.com/Marz32onE/natstrace => ../pkg/natstrace` and `replace github.com/Marz32onE/otelresty => ../pkg/otelresty` for local development. `worker` uses natstrace replace. After clone run `git submodule update --init` for natstrace.
+`api` uses `replace github.com/Marz32onE/natstrace => ../pkg/natstrace` for local development. `worker` uses natstrace replace. After clone run `git submodule update --init` for natstrace.
 
 ---
 

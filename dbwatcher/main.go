@@ -31,7 +31,7 @@ func main() {
 		attribute.String("service.name", "dbwatcher"),
 		attribute.String("service.version", "0.0.1"),
 	}
-	if err := mongotrace.InitTracer(endpoint, attrs); err != nil {
+	if _, err := mongotrace.InitTracer(endpoint, attrs); err != nil {
 		log.Fatalf("mongotrace.InitTracer: %v", err)
 	}
 	if err := natstrace.InitTracer(endpoint, attrs); err != nil {

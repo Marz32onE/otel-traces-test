@@ -13,7 +13,7 @@
 - **目的**：示範端到端 W3C Trace Context 傳播：瀏覽器 → API（HTTP + NATS 發布）→ Worker（NATS 訂閱 + WebSocket 廣播）→ 瀏覽器（WebSocket 接收並建立最後一段 span）。
 - **技術棧**：React 18 + TypeScript + Vite（前端，**Grafana Faro SDK** 負責 trace 與 W3C 傳播）、Go + Gin（API）、Go + gorilla/websocket（Worker）、NATS（JetStream + Core）、OpenTelemetry（OTel）SDK、OTel Collector、Grafana Tempo、Grafana。
 - **四條路徑**：**JetStream**（`POST /api/message` → `messages.new` → Worker）、**Core NATS**（`POST /api/message-core` → `messages.core` → Worker）、**Worker HTTP**（`POST /api/message-via-worker` → API 以 **otelresty** 呼叫 Worker `POST /notify`，HTTP 傳播 trace）、**MongoDB**（`POST /api/message-mongo` → API 寫 Mongo → **dbwatcher** → `messages.db` → Worker）。可在 Tempo 依 trace ID 查詢。
-- **Submodule**：`pkg/natstrace`（[natstrace](https://github.com/Marz32onE/natstrace) — NATS 的 OTel 包裝）、`pkg/otelresty`（otelresty — go-resty HTTP 客戶端 OTel 套件）。Clone 後需 `git submodule update --init`。
+- **Submodule**：`pkg/natstrace`（[natstrace](https://github.com/Marz32onE/natstrace) — NATS 的 OTel 包裝）。API 使用 [github.com/dubonzi/otelresty](https://github.com/dubonzi/otelresty) 作為 go-resty 的 OTel（span + trace 傳播）。Clone 後需 `git submodule update --init`。
 - **建置與執行**：Docker Compose 從專案根目錄 build；`api` 與 `worker` 的 build context 為根目錄。使用 `make up` 或 `docker compose up --build`（Makefile 預設為 `podman compose`，可覆寫 `COMPOSE_CMD='docker compose'`）。
 - **關鍵設定**：`api`、`worker` 皆需 `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` 才會把 span 送到 Tempo；前端透過 `VITE_OTEL_COLLECTOR_URL` 以 OTLP/HTTP 送 trace，經 Collector（CORS 支援）轉發到 Tempo。
 
@@ -258,7 +258,6 @@ make clean   # 含 -v
 │       └── tracing.ts          # Grafana Faro 初始化（TracingInstrumentation、OtlpHttpTransport、propagateTraceHeaderCorsUrls）
 ├── pkg/
 │   ├── natstrace/              # Git submodule — natstrace（NATS OTel 包裝，W3C + JetStream/Core）
-│   ├── otelresty/              # otelresty — go-resty HTTP 客戶端 OTel（API → Worker POST /notify）
 │   └── mongodbtrace/           # mongotrace — MongoDB 的 OTel 包裝（需先 InitTracer 再 NewClient）
 ├── charts/otel-traces-test/config/   # tempo.yaml、otel-collector.yaml（Compose 掛載）
 ├── grafana/
@@ -274,7 +273,7 @@ make clean   # 含 -v
 
 - **natstrace**（`pkg/natstrace`）：使用 NATS 或 JetStream 的服務（api、worker、dbwatcher）必須在呼叫 `natstrace.Connect` 之前先執行 **`natstrace.InitTracer(endpoint, attrs...)`**。未呼叫時 `Connect` 會回傳 `ErrInitTracerRequired`。程式結束前可呼叫 **`defer natstrace.ShutdownTracer()`** 關閉 TracerProvider。
 - **mongodbtrace**（`pkg/mongodbtrace`）：使用 MongoDB 的服務（api、dbwatcher）必須在呼叫 **`mongotrace.NewClient(uri)`** 之前先執行 **`mongotrace.InitTracer(endpoint, attrs...)`**。未呼叫時 `NewClient` 會回傳 **`ErrInitTracerRequired`**。結束前可 **`defer mongotrace.ShutdownTracer()`**。
-- **otelresty**（`pkg/otelresty`）：使用 go-resty 呼叫下游 HTTP 的服務（api）需先 **`otelresty.InitTracer(endpoint, attrs...)`**，再以 **`otelresty.TraceClient(restyClient)`** 包裝；結束前 **`defer otelresty.ShutdownTracer()`**。API 以此外呼 Worker `POST /notify`（`/api/message-via-worker`）。
+- **otelresty**：API 使用 **github.com/dubonzi/otelresty**，以 **`otelresty.TraceClient(restyClient)`** 包裝 resty client（spans + trace 傳播）。無需單獨 InitTracer；由 natstrace/mongotrace 設定 global TracerProvider 即可。
 - **API 變更**：
   - `natstrace.Connect` 簽名為 **`Connect(url string, natsOpts []nats.Option)`**，不再接受 `WithTracerProvider` / `WithPropagator`；Tracer 與 Propagator 由 global（`InitTracer` 設定）提供。
   - `mongotrace.NewClient(uri)` 僅接受選用參數 **`WithOtelMongoOptions(...)`**，不再使用 `WithEndpoint` / `WithResourceAttributes`。
@@ -289,16 +288,15 @@ make clean   # 含 -v
 | 路徑            | 說明                                                                 | 備註                                           |
 | --------------- | -------------------------------------------------------------------- | ---------------------------------------------- |
 | `pkg/natstrace` | [natstrace](https://github.com/Marz32onE/natstrace) — NATS 的 OTel 包裝 | W3C 傳播、JetStream/Core；建議使用 tag v0.1.4+ |
-| `pkg/otelresty` | otelresty — go-resty HTTP 客戶端 OTel 套件                           | API 用以外呼 Worker；可為 repo 內 pkg 或 submodule |
+| (dependency)    | [dubonzi/otelresty](https://github.com/dubonzi/otelresty) — go-resty OTel | API 用以外呼 Worker（spans + trace 傳播）     |
 
 `api` 的 `go.mod` 使用 `replace` 指向本地（本地開發時）：
 
 ```
 replace github.com/Marz32onE/natstrace => ../pkg/natstrace
-replace github.com/Marz32onE/otelresty => ../pkg/otelresty
 ```
 
-`worker` 使用 `replace github.com/Marz32onE/natstrace => ../pkg/natstrace`。Clone 後執行 `git submodule update --init`（natstrace）；修改 `pkg/natstrace` 或 `pkg/otelresty` 後，在專案根目錄重建 api/worker 映像即可使用最新程式碼。
+`worker` 使用 `replace github.com/Marz32onE/natstrace => ../pkg/natstrace`。Clone 後執行 `git submodule update --init`（natstrace）；修改 `pkg/natstrace` 後，在專案根目錄重建 api/worker 映像即可使用最新程式碼。
 
 ---
 

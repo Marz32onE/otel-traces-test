@@ -141,6 +141,7 @@ vite.config.ts.timestamp-*
 # Go build artifacts
 api/api
 worker/worker
+dbwatcher/dbwatcher
 
 # Frontend build
 frontend/dist/

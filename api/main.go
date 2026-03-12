@@ -10,7 +10,7 @@ import (
 	"github.com/Marz32onE/mongodbtrace/mongotrace"
 	"github.com/Marz32onE/natstrace/jetstreamtrace"
 	natstrace "github.com/Marz32onE/natstrace/natstrace"
-	"github.com/Marz32onE/otelresty"
+	"github.com/dubonzi/otelresty"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
@@ -40,15 +40,11 @@ func main() {
 	if err := natstrace.InitTracer(endpoint, attrs); err != nil {
 		log.Fatalf("natstrace.InitTracer: %v", err)
 	}
-	if err := mongotrace.InitTracer(endpoint, attrs); err != nil {
+	if _, err := mongotrace.InitTracer(endpoint, attrs); err != nil {
 		log.Fatalf("mongotrace.InitTracer: %v", err)
-	}
-	if err := otelresty.InitTracer(endpoint, attrs); err != nil {
-		log.Fatalf("otelresty.InitTracer: %v", err)
 	}
 	defer natstrace.ShutdownTracer()
 	defer mongotrace.ShutdownTracer()
-	defer otelresty.ShutdownTracer()
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
@@ -86,7 +82,7 @@ func main() {
 		workerURL = "http://worker:8082"
 	}
 	base := resty.New().SetBaseURL(workerURL)
-	otelresty.TraceClient(base)
+	otelresty.TraceClient(base) // github.com/dubonzi/otelresty: spans + trace propagation
 	workerClient = base
 
 	mongoURI := os.Getenv("MONGODB_URI")
