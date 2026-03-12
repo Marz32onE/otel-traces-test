@@ -9,13 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Marz32onE/natstrace/jetstreamtrace"
-	natstrace "github.com/Marz32onE/natstrace/natstrace"
+	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
+	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
 	"github.com/Marz32onE/otelwebsocket"
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	nats "github.com/nats-io/nats.go"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -50,9 +49,8 @@ func broadcastWithTrace(ctx context.Context, body []byte, apiName string) {
 	}
 }
 
-// wsHandlerGin handles WebSocket upgrade; after Upgrade the connection is hijacked, so we do not use c.JSON.
-func wsHandlerGin(c *gin.Context) {
-	raw, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+func wsHandler(w http.ResponseWriter, r *http.Request) {
+	raw, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Upgrade error: %v", err)
 		return
@@ -82,36 +80,43 @@ type notifyBody struct {
 	Text string `json:"text"`
 }
 
-// notifyHandler handles POST /notify from API (otelresty demo); returns 200 with optional echo.
-func notifyHandler(c *gin.Context) {
+func notifyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var req notifyBody
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	log.Printf("[Notify] received: %s", req.Text)
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "text": req.Text})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "text": req.Text})
 }
 
 func main() {
 	ctx := context.Background()
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if err := natstrace.InitTracer(endpoint,
+	if err := otelnats.InitTracer(endpoint,
 		attribute.String("service.name", "worker"),
 		attribute.String("service.version", "0.0.1"),
 	); err != nil {
 		log.Fatalf("InitTracer: %v", err)
 	}
-	defer natstrace.ShutdownTracer()
+	defer otelnats.ShutdownTracer()
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
 		natsURL = nats.DefaultURL
 	}
 	var err error
-	var natsConn *natstrace.Conn
+	var natsConn *otelnats.Conn
 	for i := 0; i < 10; i++ {
-		natsConn, err = natstrace.Connect(natsURL, nil)
+		natsConn, err = otelnats.Connect(natsURL, nil)
 		if err == nil {
 			break
 		}
@@ -123,11 +128,11 @@ func main() {
 	}
 	defer natsConn.Close()
 
-	js, err := jetstreamtrace.New(natsConn)
+	js, err := oteljetstream.New(natsConn)
 	if err != nil {
 		log.Fatalf("JetStream: %v", err)
 	}
-	s, err := js.CreateOrUpdateStream(ctx, jetstreamtrace.StreamConfig{
+	s, err := js.CreateOrUpdateStream(ctx, oteljetstream.StreamConfig{
 		Name:     "MESSAGES",
 		Subjects: []string{"messages.>"},
 	})
@@ -135,16 +140,16 @@ func main() {
 		log.Printf("Stream creation warning: %v", err)
 	}
 
-	// 1) JetStream Consume (callback) — 消費者區分由 natstrace 的 messaging.consumer.name 表示 (worker-consume)
-	consConsume, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
+	// 1) JetStream Consume (callback) — 消費者區分由 otelnats 的 messaging.consumer.name 表示 (worker-consume)
+	consConsume, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:       "worker-consume",
-		FilterSubject: "messages.new",
-		AckPolicy:     jetstreamtrace.AckExplicitPolicy,
+		FilterSubject:  "messages.new",
+		AckPolicy:      oteljetstream.AckExplicitPolicy,
 	})
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-consume): %v", err)
 	}
-	cc, err := consConsume.Consume(func(m jetstreamtrace.MsgWithContext) {
+	cc, err := consConsume.Consume(func(m oteljetstream.MsgWithContext) {
 		log.Printf("[Consume] received: %s", string(m.Data()))
 		broadcastWithTrace(m.Context(), m.Data(), "Consume")
 		_ = m.Ack()
@@ -155,10 +160,10 @@ func main() {
 	defer cc.Stop()
 
 	// 2) JetStream Messages() iterator — 消費者區分: messaging.consumer.name = worker-messages；broadcast 後綴驗證用
-	consMessages, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
+	consMessages, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:       "worker-messages",
-		FilterSubject: "messages.new",
-		AckPolicy:     jetstreamtrace.AckExplicitPolicy,
+		FilterSubject:  "messages.new",
+		AckPolicy:      oteljetstream.AckExplicitPolicy,
 	})
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-messages): %v", err)
@@ -181,10 +186,10 @@ func main() {
 	}()
 
 	// 3) JetStream Fetch (single-fetch batch, trace per message)
-	consFetch, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
+	consFetch, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:       "worker-fetch",
-		FilterSubject: "messages.new",
-		AckPolicy:     jetstreamtrace.AckExplicitPolicy,
+		FilterSubject:  "messages.new",
+		AckPolicy:      oteljetstream.AckExplicitPolicy,
 	})
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-fetch): %v", err)
@@ -207,7 +212,7 @@ func main() {
 	}()
 
 	// 4) Core NATS (fire-and-go)
-	_, err = natsConn.Subscribe("messages.core", func(m natstrace.MsgWithContext) {
+	_, err = natsConn.Subscribe("messages.core", func(m otelnats.MsgWithContext) {
 		log.Printf("Received core NATS message: %s", string(m.Msg.Data))
 		broadcastWithTrace(m.Context(), m.Msg.Data, "Core")
 	})
@@ -216,15 +221,15 @@ func main() {
 	}
 
 	// 5) JetStream messages from dbwatcher (MongoDB change stream → messages.db)
-	consDB, err := s.CreateOrUpdateConsumer(ctx, jetstreamtrace.ConsumerConfig{
+	consDB, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:       "worker-db",
-		FilterSubject: "messages.db",
-		AckPolicy:     jetstreamtrace.AckExplicitPolicy,
+		FilterSubject:  "messages.db",
+		AckPolicy:      oteljetstream.AckExplicitPolicy,
 	})
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-db): %v", err)
 	}
-	ccDB, err := consDB.Consume(func(m jetstreamtrace.MsgWithContext) {
+	ccDB, err := consDB.Consume(func(m oteljetstream.MsgWithContext) {
 		log.Printf("[DB] received: %s", string(m.Data()))
 		broadcastWithTrace(m.Context(), m.Data(), "DB")
 		_ = m.Ack()
@@ -234,13 +239,13 @@ func main() {
 	}
 	defer ccDB.Stop()
 
-	r := gin.Default()
-	r.Use(otelgin.Middleware("worker"))
-	r.GET("/ws", wsHandlerGin)
-	r.POST("/notify", notifyHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ws", wsHandler)
+	mux.HandleFunc("POST /notify", notifyHandler)
 
-	log.Println("Worker (Gin) starting on :8082")
-	if err := r.Run(":8082"); err != nil {
+	handler := otelhttp.NewHandler(mux, "worker")
+	log.Println("Worker (net/http) starting on :8082")
+	if err := http.ListenAndServe(":8082", handler); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }

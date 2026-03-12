@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Marz32onE/mongodbtrace/mongotrace"
-	"github.com/Marz32onE/natstrace/jetstreamtrace"
-	natstrace "github.com/Marz32onE/natstrace/natstrace"
+	"github.com/Marz32onE/instrumentation-go/otel-mongo/otelmongo"
+	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
+	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -31,20 +31,20 @@ func main() {
 		attribute.String("service.name", "dbwatcher"),
 		attribute.String("service.version", "0.0.1"),
 	}
-	if _, err := mongotrace.InitTracer(endpoint, attrs); err != nil {
-		log.Fatalf("mongotrace.InitTracer: %v", err)
+	if _, err := otelmongo.InitTracer(endpoint, attrs); err != nil {
+		log.Fatalf("otelmongo.InitTracer: %v", err)
 	}
-	if err := natstrace.InitTracer(endpoint, attrs); err != nil {
-		log.Fatalf("natstrace.InitTracer: %v", err)
+	if err := otelnats.InitTracer(endpoint, attrs); err != nil {
+		log.Fatalf("otelnats.InitTracer: %v", err)
 	}
-	defer mongotrace.ShutdownTracer()
-	defer natstrace.ShutdownTracer()
+	defer otelmongo.ShutdownTracer()
+	defer otelnats.ShutdownTracer()
 
 	mongoURI := os.Getenv("MONGODB_URI")
 	if mongoURI == "" {
 		mongoURI = "mongodb://localhost:27017"
 	}
-	mongoClient, err := mongotrace.NewClient(mongoURI)
+	mongoClient, err := otelmongo.NewClient(mongoURI)
 	if err != nil {
 		log.Fatalf("MongoDB connect: %v", err)
 	}
@@ -58,9 +58,9 @@ func main() {
 	if natsURL == "" {
 		natsURL = "nats://localhost:4222"
 	}
-	var natsConn *natstrace.Conn
+	var natsConn *otelnats.Conn
 	for i := 0; i < 10; i++ {
-		natsConn, err = natstrace.Connect(natsURL, nil)
+		natsConn, err = otelnats.Connect(natsURL, nil)
 		if err == nil {
 			break
 		}
@@ -72,11 +72,11 @@ func main() {
 	}
 	defer natsConn.Close()
 
-	js, err := jetstreamtrace.New(natsConn)
+	js, err := oteljetstream.New(natsConn)
 	if err != nil {
 		log.Fatalf("JetStream: %v", err)
 	}
-	_, err = js.CreateOrUpdateStream(ctx, jetstreamtrace.StreamConfig{
+	_, err = js.CreateOrUpdateStream(ctx, oteljetstream.StreamConfig{
 		Name:     "MESSAGES",
 		Subjects: []string{"messages.>"},
 	})
@@ -138,7 +138,7 @@ func main() {
 				continue
 			}
 			rawDoc, _ := bson.Marshal(event.FullDocument)
-			pubCtx = mongotrace.ContextFromDocument(sigCtx, rawDoc)
+			pubCtx = otelmongo.ContextFromDocument(sigCtx, rawDoc)
 			payload = []byte(text)
 		case "delete":
 			idStr := ""

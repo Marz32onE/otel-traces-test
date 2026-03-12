@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/Marz32onE/mongodbtrace/mongotrace"
-	"github.com/Marz32onE/natstrace/jetstreamtrace"
-	natstrace "github.com/Marz32onE/natstrace/natstrace"
+	"github.com/Marz32onE/instrumentation-go/otel-mongo/otelmongo"
+	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
+	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
 	"github.com/dubonzi/otelresty"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -25,9 +25,9 @@ import (
 const mongoDBName, mongoColl = "messaging", "messages"
 
 var (
-	natsConn     *natstrace.Conn
-	jetstreamJS  jetstreamtrace.JetStream
-	mongoClient  *mongotrace.Client
+	natsConn     *otelnats.Conn
+	jetstreamJS  oteljetstream.JetStream
+	mongoClient  *otelmongo.Client
 	workerClient *resty.Client
 )
 
@@ -37,14 +37,14 @@ func main() {
 		attribute.String("service.name", "api"),
 		attribute.String("service.version", "0.0.1"),
 	}
-	if err := natstrace.InitTracer(endpoint, attrs); err != nil {
-		log.Fatalf("natstrace.InitTracer: %v", err)
+	if err := otelnats.InitTracer(endpoint, attrs); err != nil {
+		log.Fatalf("otelnats.InitTracer: %v", err)
 	}
-	if _, err := mongotrace.InitTracer(endpoint, attrs); err != nil {
-		log.Fatalf("mongotrace.InitTracer: %v", err)
+	if _, err := otelmongo.InitTracer(endpoint, attrs); err != nil {
+		log.Fatalf("otelmongo.InitTracer: %v", err)
 	}
-	defer natstrace.ShutdownTracer()
-	defer mongotrace.ShutdownTracer()
+	defer otelnats.ShutdownTracer()
+	defer otelmongo.ShutdownTracer()
 
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
@@ -52,7 +52,7 @@ func main() {
 	}
 	var err error
 	for i := 0; i < 10; i++ {
-		natsConn, err = natstrace.Connect(natsURL, nil)
+		natsConn, err = otelnats.Connect(natsURL, nil)
 		if err == nil {
 			break
 		}
@@ -64,11 +64,11 @@ func main() {
 	}
 	defer natsConn.Close()
 
-	js, err := jetstreamtrace.New(natsConn)
+	js, err := oteljetstream.New(natsConn)
 	if err != nil {
 		log.Fatalf("JetStream: %v", err)
 	}
-	_, err = js.CreateOrUpdateStream(context.Background(), jetstreamtrace.StreamConfig{
+	_, err = js.CreateOrUpdateStream(context.Background(), oteljetstream.StreamConfig{
 		Name:     "MESSAGES",
 		Subjects: []string{"messages.>"},
 	})
@@ -89,7 +89,7 @@ func main() {
 	if mongoURI == "" {
 		mongoURI = "mongodb://localhost:27017"
 	}
-	mongoClient, err = mongotrace.NewClient(mongoURI)
+	mongoClient, err = otelmongo.NewClient(mongoURI)
 	if err != nil {
 		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}

@@ -3,8 +3,8 @@ module github.com/Marz32onE/otel-traces-test/api
 go 1.26
 
 require (
-	github.com/Marz32onE/mongodbtrace v0.0.0
-	github.com/Marz32onE/natstrace v0.1.4
+	github.com/Marz32onE/instrumentation-go/otel-mongo v0.0.0
+	github.com/Marz32onE/instrumentation-go/otel-nats v0.0.0
 	github.com/dubonzi/otelresty v1.6.0
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-gonic/gin v1.11.0
@@ -17,8 +17,8 @@ require (
 )
 
 replace (
-	github.com/Marz32onE/mongodbtrace => ../pkg/mongodbtrace
-	github.com/Marz32onE/natstrace => ../pkg/natstrace
+	github.com/Marz32onE/instrumentation-go/otel-mongo => ../pkg/instrumentation-go/otel-mongo
+	github.com/Marz32onE/instrumentation-go/otel-nats => ../pkg/instrumentation-go/otel-nats
 )
 
 require (

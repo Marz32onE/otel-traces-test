@@ -1,10 +1,4 @@
-[submodule "pkg/natstrace"]
-	path = pkg/natstrace
-	url = https://github.com/Marz32onE/natstrace.git
-[submodule "pkg/mongodbtrace"]
-	path = pkg/mongodbtrace
-	url = https://github.com/Marz32onE/mongodbtrace.git
-[submodule "pkg/otelwebsocket"]
-	path = pkg/otelwebsocket
-	url = https://github.com/Marz32onE/otelwebsocket.git
-	branch = copilot/add-otlp-trace-propagation
+[submodule "pkg/instrumentation-go"]
+	path = pkg/instrumentation-go
+	url = https://github.com/Marz32onE/instrumentation-go.git
+	branch = feat/trace-propagation-mod

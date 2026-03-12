@@ -1,7 +1,6 @@
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
-COPY pkg/natstrace ./pkg/natstrace/
-COPY pkg/otelwebsocket ./pkg/otelwebsocket/
+COPY pkg/instrumentation-go ./pkg/instrumentation-go/
 COPY worker/go.mod worker/go.sum ./worker/
 RUN cd worker && go mod download
 COPY worker/ ./worker/
