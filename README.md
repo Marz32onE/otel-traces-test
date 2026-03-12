@@ -4,18 +4,18 @@
 
 ---
 
-A full-stack example demonstrating **OpenTelemetry distributed tracing**. Users send messages from the browser over three paths: **JetStream** (API publishes to NATS), **Core NATS** (fire-and-go), and **MongoDB** (API writes to Mongo → dbwatcher watches change stream → forwards to NATS → Worker). The Worker subscribes and broadcasts back to the frontend over WebSocket; **one trace runs from frontend send to frontend receive** across all services and can be viewed in Grafana/Tempo.
+A full-stack example demonstrating **OpenTelemetry distributed tracing**. Users send messages from the browser over four paths: **JetStream** (API publishes to NATS), **Core NATS** (fire-and-go), **Worker HTTP** (API → Worker via otelresty), and **MongoDB** (API writes to Mongo → dbwatcher watches change stream → forwards to NATS → Worker). The Worker subscribes and broadcasts back to the frontend over WebSocket; **one trace runs from frontend send to frontend receive** across all services and can be viewed in Grafana/Tempo.
 
 ---
 
 ## Summary for first-time users and AI agents
 
 - **Goal:** End-to-end W3C Trace Context propagation: browser → API (HTTP + NATS publish) → Worker (NATS subscribe + WebSocket broadcast) → browser (WebSocket receive and final span).
-- **Stack:** React 18 + TypeScript + Vite (frontend; **Grafana Faro SDK** for trace and W3C propagation), Go + Gin (API), Go + gorilla/websocket (Worker), NATS (JetStream + Core), OpenTelemetry SDK, OTel Collector, Grafana Tempo, Grafana.
+- **Stack:** React 18 + TypeScript + Vite (frontend; **Grafana Faro SDK** for trace and W3C propagation), Go + Gin (API), Go + net/http + otelhttp (Worker), NATS (JetStream + Core), OpenTelemetry SDK, OTel Collector, Grafana Tempo, Grafana.
 - **Four paths:** **JetStream** (`POST /api/message` → `messages.new` → Worker), **Core NATS** (`POST /api/message-core` → `messages.core` → Worker), **Worker HTTP** (`POST /api/message-via-worker` → API calls Worker `POST /notify` via **otelresty** → trace propagates over HTTP), **MongoDB** (`POST /api/message-mongo` → API writes to Mongo → **dbwatcher** → `messages.db` → Worker). Query by trace ID in Tempo.
-- **Submodules:** `pkg/natstrace` ([natstrace](https://github.com/Marz32onE/natstrace) — OTel wrapper for NATS). API uses [github.com/dubonzi/otelresty](https://github.com/dubonzi/otelresty) for go-resty (spans + trace propagation). Run `git submodule update --init` after clone.
-- **Build & run:** Docker Compose builds from repo root; `api` and `worker` use root as build context. Use `make up` or `docker compose up --build` (Makefile defaults to `podman compose`; override with `COMPOSE_CMD='docker compose'`).
-- **Config:** `api` and `worker` need `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` to send spans to Tempo; frontend uses `VITE_OTEL_COLLECTOR_URL` for OTLP/HTTP via Collector (CORS) to Tempo.
+- **Instrumentation:** `pkg/instrumentation-go` (Git submodule) — [instrumentation-go](https://github.com/Marz32onE/instrumentation-go): **otel-nats** (otelnats + oteljetstream), **otel-mongo** (otelmongo), **otel-websocket**. Packages accept **TracerProvider** and **Propagators** via options; they do **not** provide InitTracer. The app initializes the global provider and propagator at startup (see **pkg/otelsetup** and each package’s **example/**). API uses [github.com/dubonzi/otelresty](https://github.com/dubonzi/otelresty) for go-resty (spans + trace propagation).
+- **Build & run:** Docker Compose builds from repo root; `api`, `worker`, and `dbwatcher` use root as build context and copy `pkg/instrumentation-go`. Use `make up` or `docker compose up --build` (Makefile defaults to `podman compose`; override with `COMPOSE_CMD='docker compose'`).
+- **Config:** `api`, `worker`, and `dbwatcher` need `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` to send spans to Tempo; frontend uses `VITE_OTEL_COLLECTOR_URL` for OTLP/HTTP via Collector (CORS) to Tempo.
 
 ---
 
@@ -28,8 +28,8 @@ A full-stack example demonstrating **OpenTelemetry distributed tracing**. Users 
 │ :3000    │                │  :8088   │   messages.db      │  :8082   │
 │          │  /message-via- │     │    │  (trace context)  │     ▲    │
 │          │  worker (HTTP)─┼─────┼────┼── POST /notify ───┼─────┘    │
-│          │  /message-mongo│     ▼    │  (otelresty)       │  (Gin +   │
-│          │                │ ┌────────┐   change stream   │   otelgin)│
+│          │  /message-mongo│     ▼    │  (otelresty)       │ (net/http│
+│          │                │ ┌────────┐   change stream   │ +otelhttp)│
 │          │                │ │MongoDB │──► dbwatcher ──────┼─────┐    │
 │          │                │ │ :27017 │   (→ messages.db) │     │    │
 │          │◄─────────────────────────────────────────────────────────┤
@@ -61,9 +61,9 @@ API and Worker (Go) can send traces to Tempo via gRPC. The **browser** must use 
 |------------------|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------|
 | **Frontend**     | React 18 + TS + Vite     | UI: two groups (NATS: JetStream/Core; MongoDB: Insert/Update/Read/Delete with editable id). Shared results area at bottom: messages from WebSocket (Worker monitoring NATS). Trace flow hint per group. | `3000`                                 |
 | **API**          | Go (Gin) + otelresty     | Endpoints: `POST /api/message` (JetStream), `POST /api/message-core` (Core), `POST /api/message-via-worker` (HTTP to Worker via otelresty), `POST /api/message-mongo` (MongoDB), `...-mongo-update/read/delete`; returns `trace_id`. Env: `WORKER_URL` (default `http://worker:8082`). | `8088`                                 |
-| **Worker**       | Go (Gin + otelgin)       | `GET /ws` (WebSocket), `POST /notify` (HTTP, used by API/otelresty); JetStream + Core Subscribe; broadcasts **traceparent/tracestate + body + api** over WebSocket. | `8082`                                 |
-| **MongoDB**      | Mongo 7 (replica set)    | Stores `messaging.messages`; mongotrace injects `_oteltrace` on write. dbwatcher uses change stream (replica set required).             | `27017`                                |
-| **dbwatcher**    | Go + mongo-driver        | Watches `messaging.messages` **CRUD** (insert, update, replace, delete); forwards to NATS JetStream `messages.db` (insert/update/replace: doc text; delete: `{"op":"delete","id":"..."}`). Worker subscribes and broadcasts. | no public port                         |
+| **Worker**       | Go (net/http + otelhttp) | `GET /ws` (WebSocket), `POST /notify` (HTTP, used by API/otelresty); JetStream + Core Subscribe; broadcasts **traceparent/tracestate + body + api** over WebSocket. | `8082`                                 |
+| **MongoDB**      | Mongo 7 (replica set)    | Stores `messaging.messages`; otelmongo injects `_oteltrace` on write. dbwatcher uses change stream (replica set required).             | `27017`                                |
+| **dbwatcher**    | Go + mongo-driver        | Watches `messaging.messages` **CRUD** (insert, update, replace, delete); forwards to NATS JetStream `messages.db`. Worker subscribes and broadcasts. | no public port                         |
 | **NATS**         | NATS Alpine + JetStream  | Message queue; healthcheck uses `wget` (alpine)                                                                                         | `4222` (client), `8222` (monitoring)   |
 | **OTel Collector** | OTel Collector Contrib | Receives gRPC/HTTP OTLP, forwards to Tempo; HTTP endpoint has CORS for browser                                                          | `4317` (gRPC), `4318` (HTTP)           |
 | **Tempo**        | Grafana Tempo 2.9.0      | Trace backend (**pinned 2.9.0**; v2.10+ incompatible)                                                                                    | `3200`                                 |
@@ -75,10 +75,10 @@ API and Worker (Go) can send traces to Tempo via gRPC. The **browser** must use 
 
 1. User enters a message in **NATS** or **MongoDB** group and clicks the relevant button (JetStream, Core NATS, or MongoDB Insert/Update/Read/Delete). MongoDB actions use an editable **ID** field (default `_id`; after Insert the returned id is synced).
 2. Frontend creates the appropriate send span (CLIENT), propagates via `traceparent`/`tracestate` headers, and sends HTTP POST to API.
-3. API’s `otelgin` continues the trace; **JetStream** path uses `jetstreamtrace.Publish`; **Core** uses `natstrace.Publish`; **MongoDB** path uses mongotrace Collection (Insert/Update/Read/Delete) and returns `trace_id`.
+3. API’s `otelgin` continues the trace; **JetStream** path uses `oteljetstream.Publish`; **Core** uses `otelnats.Publish`; **MongoDB** path uses otelmongo Collection (Insert/Update/Read/Delete) and returns `trace_id`.
 4. **MongoDB path:** dbwatcher watches the collection’s change stream for **all CRUD** (insert, update, replace, delete). On insert/update/replace it publishes the document’s `text` to JetStream topic `messages.db` (with `_oteltrace` when present). On delete it publishes `{"op":"delete","id":"<hex>"}`. Worker subscribes and broadcasts **traceparent, tracestate, body, api** over WebSocket.
-5. **JetStream/Core:** Worker receives via JetStream (Consume/Messages) or Core Subscribe; `natstrace`/`jetstreamtrace` extract trace from headers, create receive span, and broadcast over WebSocket.
-6. Frontend receives via WebSocket; the **shared results area** at the bottom (“由 WebSocket / Worker 監聽 NATS 取出的結果”) shows all messages. If `traceparent` and `body` exist, frontend uses `propagation.extract` and creates `receive message` span (CONSUMER). UI shows **Trace verification** and last `trace_id` for Grafana/Tempo.
+5. **JetStream/Core:** Worker receives via JetStream (Consume/Messages) or Core Subscribe; **otelnats** / **oteljetstream** extract trace from headers, create receive span, and broadcast over WebSocket.
+6. Frontend receives via WebSocket; the **shared results area** at the bottom shows all messages. If `traceparent` and `body` exist, frontend uses `propagation.extract` and creates `receive message` span (CONSUMER). UI shows **Trace verification** and last `trace_id` for Grafana/Tempo.
 
 ---
 
@@ -89,18 +89,18 @@ API and Worker (Go) can send traces to Tempo via gRPC. The **browser** must use 
 ```
 Frontend: send-message-jetstream          (SpanKind CLIENT)
   └─ API: POST /api/message               (otelgin, SERVER)
-       └─ API: messages.new publish       (jetstreamtrace, PRODUCER)
-            └─ Worker: messages.new receive (jetstreamtrace, CONSUMER)
+       └─ API: messages.new publish       (oteljetstream, PRODUCER)
+            └─ Worker: messages.new receive (oteljetstream, CONSUMER)
                  └─ Frontend: receive message (CONSUMER)
 ```
 
-**Worker HTTP path** (otelresty):
+**Worker HTTP path** (otelresty + otelhttp):
 
 ```
 Frontend: send-message-via-worker-http    (CLIENT)
   └─ API: POST /api/message-via-worker    (otelgin, SERVER)
        └─ API: resty POST /notify          (otelresty, CLIENT)
-            └─ Worker: POST /notify        (otelgin, SERVER)
+            └─ Worker: POST /notify         (otelhttp, SERVER)
 ```
 
 **MongoDB path:**
@@ -115,7 +115,7 @@ Frontend: send-message-mongo              (CLIENT)
 ```
 
 - **Frontend:** OTLP/HTTP → OTel Collector (CORS).
-- **API/Worker:** OTLP/gRPC → OTel Collector → Tempo.
+- **API/Worker/dbwatcher:** OTLP/gRPC → OTel Collector → Tempo.
 - API CORS allows `traceparent`, `tracestate`.
 
 ---
@@ -127,9 +127,9 @@ Frontend: send-message-mongo              (CLIENT)
 
 ### Development: tests and lint
 
-- Go tests use **testify** (`require`/`assert`) in `pkg/natstrace`, `pkg/mongodbtrace`.
-- Run **`go vet ./...`** and **`go test ./...`** in each module (`api`, `worker`, `dbwatcher`, `pkg/natstrace`, `pkg/mongodbtrace`).
-- With [golangci-lint](https://golangci-lint.run/) installed, run it per Go module directory (or `go work` at root).
+- Go tests use **testify** in `pkg/instrumentation-go` (otel-nats, otel-mongo) and in `api`/`worker`/`dbwatcher` where applicable.
+- Run **`go vet ./...`** and **`go test ./...`** in each module (`api`, `worker`, `dbwatcher`, `pkg/otelsetup`, `pkg/instrumentation-go/otel-nats`, `pkg/instrumentation-go/otel-mongo`, `pkg/instrumentation-go/otel-websocket`).
+- With [golangci-lint](https://golangci-lint.run/) installed, run it per Go module directory.
 
 ---
 
@@ -216,13 +216,17 @@ make clean   # with -v
 
 ```
 .
-├── api/              # Go + Gin API (three endpoints, trace_id)
-├── worker/           # WebSocket worker (NATS subscribe + broadcast)
-├── dbwatcher/        # Mongo change stream → NATS
-├── frontend/         # React + Vite + Grafana Faro
+├── api/                    # Go + Gin API (endpoints, trace_id)
+├── worker/                 # Go net/http + otelhttp (WebSocket + POST /notify)
+├── dbwatcher/              # Mongo change stream → NATS
+├── frontend/               # React + Vite + Grafana Faro
 ├── pkg/
-│   ├── natstrace/    # Git submodule — NATS OTel (W3C + JetStream/Core)
-│   └── mongodbtrace/ # mongotrace — MongoDB OTel (InitTracer before NewClient)
+│   ├── instrumentation-go/   # Git submodule — otel-nats, otel-mongo, otel-websocket
+│   │   ├── otel-nats/          # otelnats, oteljetstream (NATS + JetStream OTel)
+│   │   ├── otel-mongo/        # otelmongo (MongoDB OTel, _oteltrace)
+│   │   ├── otel-websocket/    # WebSocket trace propagation
+│   │   └── example/           # (per package) how to init TracerProvider + use package
+│   └── otelsetup/             # Shared OTLP TracerProvider init (Init, Shutdown)
 ├── charts/otel-traces-test/config/
 ├── grafana/
 ├── docker-compose.yml
@@ -230,25 +234,26 @@ make clean   # with -v
 └── LICENSE
 ```
 
-`api` and `worker` Dockerfiles use the repo root as build context.
+`api`, `worker`, and `dbwatcher` Dockerfiles use the repo root as build context and copy `pkg/instrumentation-go`.
 
-### Tracing init and API (natstrace / mongodbtrace)
+### Tracing: provider/propagator init (per OTel Go Contrib)
 
-- **natstrace:** Call **`natstrace.InitTracer(endpoint, attrs...)`** before **`natstrace.Connect`**. Otherwise `Connect` returns `ErrInitTracerRequired`. Use **`defer natstrace.ShutdownTracer()`** on exit.
-- **mongodbtrace:** Call **`mongotrace.InitTracer(endpoint, attrs...)`** before **`mongotrace.NewClient(uri)`**. Otherwise `NewClient` returns **`ErrInitTracerRequired`**. Use **`defer mongotrace.ShutdownTracer()`** on exit.
-- **API:** `natstrace.Connect(url, natsOpts)` — no `WithTracerProvider`/`WithPropagator`; tracer from global. `mongotrace.NewClient(uri)` only accepts **`WithOtelMongoOptions(...)`**.
-- **Tests:** Use **`natstrace.InitTracer("", natstrace.WithTracerProvider(tp))`** or **`mongotrace.InitTracer("", mongotrace.WithTracerProvider(tp))`** (and optionally `otel.SetTextMapPropagator(prop)` for natstrace) before `Connect`/`NewClient`.
+Instrumentation packages (**otelnats**, **oteljetstream**, **otelmongo**, **otelwebsocket**) do **not** provide `InitTracer`. They accept **TracerProvider** and **Propagators** via options and default to `otel.GetTracerProvider()` / `otel.GetTextMapPropagator()`.
+
+- **This repo:** `api`, `worker`, and `dbwatcher` use **pkg/otelsetup**: call **`otelsetup.Init("", attribute.String("service.name", "api"), ...)`** once at startup, then **`defer otelsetup.Shutdown(tp)`**. After that, use `otelnats.Connect`, `otelmongo.NewClient`, etc. with no per-package init.
+- **Examples:** Each package under `pkg/instrumentation-go` has an **example/** directory showing how to create an OTLP TracerProvider, set `otel.SetTracerProvider` and `otel.SetTextMapPropagator`, then use the package.
 
 ---
 
 ## Git submodules
 
-| Path             | Description                                      |
-|------------------|--------------------------------------------------|
-| `pkg/natstrace`  | [natstrace](https://github.com/Marz32onE/natstrace) — NATS OTel; use tag v0.1.4+ |
-| (dependency)     | [dubonzi/otelresty](https://github.com/dubonzi/otelresty) — OTel for go-resty; API uses it for HTTP client spans + propagation to Worker. |
+| Path                      | Description |
+|---------------------------|-------------|
+| `pkg/instrumentation-go`  | [instrumentation-go](https://github.com/Marz32onE/instrumentation-go) — otel-nats (otelnats + oteljetstream), otel-mongo (otelmongo), otel-websocket. Branch: `feat/trace-propagation-mod`. |
 
-`api` uses `replace github.com/Marz32onE/natstrace => ../pkg/natstrace` for local development. `worker` uses natstrace replace. After clone run `git submodule update --init` for natstrace.
+**Dependencies (not submodules):** [dubonzi/otelresty](https://github.com/dubonzi/otelresty) — OTel for go-resty; API uses it for HTTP client spans + propagation to Worker.
+
+After clone run `git submodule update --init` for `pkg/instrumentation-go`.
 
 ---
 
@@ -261,14 +266,14 @@ make clean   # with -v
 | `NATS_URL`                     | `nats://localhost:4222`    | NATS address                  |
 | `WORKER_URL`                   | `http://worker:8082`       | Worker base URL (for `/api/message-via-worker` via otelresty) |
 | `MONGODB_URI`                  | `mongodb://localhost:27017`| MongoDB (for `/api/message-mongo`) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`           | OTel Collector gRPC (use `otel-collector:4317` in Docker) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`  | `localhost:4317`           | OTel Collector gRPC (use `otel-collector:4317` in Docker) |
 
 ### Worker
 
 | Variable                       | Default                 | Description (set for spans in Tempo) |
 |--------------------------------|-------------------------|--------------------------------------|
 | `NATS_URL`                     | `nats://localhost:4222` | NATS address                         |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`        | Use `otel-collector:4317` in Docker  |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`  | `localhost:4317`        | Use `otel-collector:4317` in Docker  |
 
 ### dbwatcher
 
@@ -276,21 +281,21 @@ make clean   # with -v
 |--------------------------------|----------------------------|
 | `MONGODB_URI`                  | `mongodb://localhost:27017`|
 | `NATS_URL`                     | `nats://localhost:4222`    |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`           |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`  | `localhost:4317`           |
 
 ### Frontend (build-time)
 
 | Variable                   | Default                    |
 |----------------------------|----------------------------|
 | `VITE_API_URL`             | `http://localhost:8088`   |
-| `VITE_WS_URL`              | `ws://localhost:8082`      |
+| `VITE_WS_URL`              | `ws://localhost:8082`     |
 | `VITE_OTEL_COLLECTOR_URL`  | `http://localhost:4318`   |
 
 ---
 
 ## Troubleshooting
 
-- **API traces disappear after Collector restart:** Restart dependent services: `docker compose restart otel-collector api worker`.
+- **API traces disappear after Collector restart:** Restart dependent services: `docker compose restart otel-collector api worker dbwatcher`.
 - **Worker spans missing in Tempo:** Set `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` in `docker-compose.yml`.
 - **Frontend changes not applied:** `docker compose build --no-cache frontend && docker compose up -d frontend`.
 - **Tempo returns 404 for trace:** Wait a few seconds after sending then query again.
