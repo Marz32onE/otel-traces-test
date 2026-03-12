@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/Marz32onE/instrumentation-go/otel-nats v0.0.0
-	github.com/Marz32onE/otelwebsocket v0.0.0
+	github.com/Marz32onE/instrumentation-go/otel-websocket v0.0.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.49.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0
@@ -16,7 +16,7 @@ require (
 
 replace (
 	github.com/Marz32onE/instrumentation-go/otel-nats => ../pkg/instrumentation-go/otel-nats
-	github.com/Marz32onE/otelwebsocket => ../pkg/instrumentation-go/otel-websocket
+	github.com/Marz32onE/instrumentation-go/otel-websocket => ../pkg/instrumentation-go/otel-websocket
 )
 
 require (

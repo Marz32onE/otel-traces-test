@@ -14,7 +14,7 @@ import (
 
 	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
-	"github.com/Marz32onE/otelwebsocket"
+	"github.com/Marz32onE/instrumentation-go/otel-websocket"
 	"github.com/gorilla/websocket"
 	nats "github.com/nats-io/nats.go"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
