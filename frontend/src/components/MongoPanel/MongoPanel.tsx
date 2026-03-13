@@ -3,6 +3,8 @@ import { styles } from "../../styles";
 import { DEFAULT_MONGO_ID } from "../../constants/endpoints";
 
 type MongoPanelProps = {
+  title?: string;
+  traceFlowPath?: string;
   mongoInputText: string;
   setMongoInputText: (v: string) => void;
   mongoId: string;
@@ -17,6 +19,8 @@ type MongoPanelProps = {
 };
 
 export function MongoPanel({
+  title = "MongoDB",
+  traceFlowPath = "Frontend → API → MongoDB → dbwatcher → NATS → Worker → WebSocket",
   mongoInputText,
   setMongoInputText,
   mongoId,
@@ -31,7 +35,7 @@ export function MongoPanel({
 }: MongoPanelProps) {
   return (
     <div style={styles.panel}>
-      <h2 style={styles.panelTitle}>MongoDB</h2>
+      <h2 style={styles.panelTitle}>{title}</h2>
       <div style={styles.inputRow}>
         <input
           style={styles.input}
@@ -103,9 +107,7 @@ export function MongoPanel({
       </div>
       <div style={styles.traceFlow}>
         <span style={styles.traceFlowLabel}>Trace 經過：</span>
-        <span style={styles.traceFlowPath}>
-          Frontend → API → MongoDB → dbwatcher → NATS → Worker → WebSocket
-        </span>
+        <span style={styles.traceFlowPath}>{traceFlowPath}</span>
       </div>
     </div>
   );

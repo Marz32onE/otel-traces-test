@@ -3,7 +3,7 @@ module github.com/Marz32onE/otel-traces-test/dbwatcher
 go 1.26
 
 require (
-	github.com/Marz32onE/instrumentation-go/otel-mongo v0.0.0
+	github.com/Marz32onE/instrumentation-go/otel-mongo/v2 v2.0.0
 	github.com/Marz32onE/instrumentation-go/otel-nats v0.0.0
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 	go.opentelemetry.io/otel v1.42.0
@@ -13,7 +13,7 @@ require (
 )
 
 replace (
-	github.com/Marz32onE/instrumentation-go/otel-mongo => ../pkg/instrumentation-go/otel-mongo
+	github.com/Marz32onE/instrumentation-go/otel-mongo/v2 => ../pkg/instrumentation-go/otel-mongo/v2
 	github.com/Marz32onE/instrumentation-go/otel-nats => ../pkg/instrumentation-go/otel-nats
 )
 

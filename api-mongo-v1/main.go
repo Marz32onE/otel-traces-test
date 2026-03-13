@@ -1,25 +1,22 @@
+// api-mongo-v1 runs the same MongoDB CRUD HTTP API as the main api service,
+// but uses the otel-mongo v1 wrapper (root package) and go.mongodb.org/mongo-driver v1
+// to verify trace propagation with the v1 driver in the demo project.
 package main
 
 import (
 	"context"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
-	otelmongo "github.com/Marz32onE/instrumentation-go/otel-mongo/v2"
-	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
-	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
-	"github.com/dubonzi/otelresty"
+	"github.com/Marz32onE/instrumentation-go/otel-mongo/otelmongo"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/go-resty/resty/v2"
-	nats "github.com/nats-io/nats.go"
-	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -33,15 +30,8 @@ import (
 
 const mongoDBName, mongoColl = "messaging", "messages"
 
-var (
-	natsConn     *otelnats.Conn
-	jetstreamJS  oteljetstream.JetStream
-	mongoClient  *otelmongo.Client
-	workerClient *resty.Client
-)
+var mongoClient *otelmongo.Client
 
-// initOTEL creates an OTLP TracerProvider and propagator, sets globals, and returns them
-// so the app can pass them into instrumentation (otelnats, otelmongo) and defer shutdown.
 func initOTEL(endpoint string, attrs ...attribute.KeyValue) (*sdktrace.TracerProvider, propagation.TextMapPropagator, error) {
 	if endpoint == "" {
 		endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -49,7 +39,7 @@ func initOTEL(endpoint string, attrs ...attribute.KeyValue) (*sdktrace.TracerPro
 	if endpoint == "" {
 		endpoint = "localhost:4317"
 	}
-	useHTTP := useHTTPEndpoint(endpoint)
+	useHTTP := strings.Contains(endpoint, "4318") || strings.HasPrefix(endpoint, "http")
 	ctx := context.Background()
 	var exp sdktrace.SpanExporter
 	var err error
@@ -72,27 +62,15 @@ func initOTEL(endpoint string, attrs ...attribute.KeyValue) (*sdktrace.TracerPro
 	return tp, prop, nil
 }
 
-func useHTTPEndpoint(endpoint string) bool {
-	s := strings.TrimSpace(endpoint)
-	if s == "" {
-		return false
+func getTraceIDFromContext(ctx context.Context) string {
+	if span := trace.SpanFromContext(ctx); span.SpanContext().HasTraceID() {
+		return span.SpanContext().TraceID().String()
 	}
-	if u, err := url.Parse(s); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-		return true
-	}
-	_, port, _ := func(h string) (string, string, error) {
-		u, err := url.Parse("//" + h)
-		if err != nil {
-			return "", "", err
-		}
-		return u.Hostname(), u.Port(), nil
-	}(s)
-	p, _ := strconv.Atoi(port)
-	return p == 4318
+	return ""
 }
 
 func main() {
-	tp, prop, err := initOTEL("", attribute.String("service.name", "api"), attribute.String("service.version", "0.0.1"))
+	tp, _, err := initOTEL("", attribute.String("service.name", "api-mongo-v1"), attribute.String("service.version", "0.0.1"))
 	if err != nil {
 		log.Fatalf("initOTEL: %v", err)
 	}
@@ -102,56 +80,20 @@ func main() {
 		_ = tp.Shutdown(ctx)
 	}()
 
-	natsURL := os.Getenv("NATS_URL")
-	if natsURL == "" {
-		natsURL = nats.DefaultURL
-	}
-	for i := 0; i < 10; i++ {
-		natsConn, err = otelnats.ConnectWithOptions(natsURL, nil, otelnats.WithTracerProvider(tp), otelnats.WithPropagators(prop))
-		if err == nil {
-			break
-		}
-		log.Printf("Waiting for NATS... (%d/10)", i+1)
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		log.Fatalf("Failed to connect to NATS: %v", err)
-	}
-	defer natsConn.Close()
-
-	js, err := oteljetstream.New(natsConn)
-	if err != nil {
-		log.Fatalf("JetStream: %v", err)
-	}
-	_, err = js.CreateOrUpdateStream(context.Background(), oteljetstream.StreamConfig{
-		Name:     "MESSAGES",
-		Subjects: []string{"messages.>"},
-	})
-	if err != nil {
-		log.Printf("Stream creation warning: %v", err)
-	}
-	jetstreamJS = js
-
-	workerURL := os.Getenv("WORKER_URL")
-	if workerURL == "" {
-		workerURL = "http://worker:8082"
-	}
-	base := resty.New().SetBaseURL(workerURL)
-	otelresty.TraceClient(base) // github.com/dubonzi/otelresty: spans + trace propagation
-	workerClient = base
-
 	mongoURI := os.Getenv("MONGODB_URI")
 	if mongoURI == "" {
 		mongoURI = "mongodb://localhost:27017"
 	}
-	mongoClient, err = otelmongo.NewClient(mongoURI, otelmongo.WithTracerProvider(tp), otelmongo.WithPropagators(prop))
-	if err != nil {
-		log.Fatalf("Failed to connect to MongoDB: %v", err)
+	ctx := context.Background()
+	var errConn error
+	mongoClient, errConn = otelmongo.NewClient(ctx, mongoURI, otelmongo.WithTracerProvider(tp), otelmongo.WithPropagators(otel.GetTextMapPropagator()))
+	if errConn != nil {
+		log.Fatalf("Failed to connect to MongoDB: %v", errConn)
 	}
 	defer func() {
 		_ = mongoClient.Disconnect(context.Background())
 	}()
-	if err = mongoClient.Ping(context.Background(), nil); err != nil {
+	if err := mongoClient.Ping(context.Background(), nil); err != nil {
 		log.Fatalf("MongoDB ping: %v", err)
 	}
 
@@ -164,20 +106,17 @@ func main() {
 		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
 	}))
-	r.Use(otelgin.Middleware("api"))
+	r.Use(otelgin.Middleware("api-mongo-v1"))
 
-	r.POST("/api/message", handleMessage)                  // JetStream (natstrace)
-	r.POST("/api/message-core", handleMessageCore)         // Core NATS fire-and-go
-	r.POST("/api/message-mongo", handleMessageMongo)       // MongoDB Insert
-	r.POST("/api/message-via-worker", handleMessageViaWorker) // HTTP to Worker (otelresty)
+	r.POST("/api/message-mongo", handleMessageMongo)
 	r.POST("/api/message-mongo-update", handleMessageMongoUpdate)
 	r.POST("/api/message-mongo-read", handleMessageMongoRead)
 	r.POST("/api/message-mongo-delete", handleMessageMongoDelete)
 	r.POST("/api/message-mongo-bulk-insert", handleMessageMongoBulkInsert)
 	r.POST("/api/message-mongo-bulk-update", handleMessageMongoBulkUpdate)
 
-	log.Println("API server starting on :8088")
-	if err := r.Run(":8088"); err != nil {
+	log.Println("api-mongo-v1 server starting on :8089")
+	if err := r.Run(":8089"); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }
@@ -186,71 +125,26 @@ type MessageRequest struct {
 	Text string `json:"text" binding:"required"`
 }
 
-func getTraceIDFromContext(ctx context.Context) string {
-	if span := trace.SpanFromContext(ctx); span.SpanContext().HasTraceID() {
-		return span.SpanContext().TraceID().String()
-	}
-	return ""
+type MongoIDRequest struct {
+	ID string `json:"id" binding:"required"`
 }
 
-func handleMessage(c *gin.Context) {
-	var req MessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	ctx := c.Request.Context()
-	if _, err := jetstreamJS.Publish(ctx, "messages.new", []byte(req.Text)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"status":   "published",
-		"trace_id": getTraceIDFromContext(ctx),
-		"endpoint": "JetStream",
-	})
+type MongoUpdateRequest struct {
+	ID   string `json:"id" binding:"required"`
+	Text string `json:"text"`
 }
 
-func handleMessageCore(c *gin.Context) {
-	var req MessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	ctx := c.Request.Context()
-	if err := natsConn.Publish(ctx, "messages.core", []byte(req.Text)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"status":   "published",
-		"trace_id": getTraceIDFromContext(ctx),
-		"endpoint": "Core",
-	})
+type MongoBulkInsertRequest struct {
+	Texts []string `json:"texts" binding:"required,dive,min=1"`
 }
 
-// handleMessageViaWorker calls Worker POST /notify via otelresty (HTTP with trace propagation).
-func handleMessageViaWorker(c *gin.Context) {
-	var req MessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	ctx := c.Request.Context()
-	resp, err := workerClient.R().SetContext(ctx).SetBody(gin.H{"text": req.Text}).Post("/notify")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to call worker: " + err.Error()})
-		return
-	}
-	if resp.IsError() {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "worker returned " + resp.Status()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"status":   "ok",
-		"trace_id": getTraceIDFromContext(ctx),
-		"endpoint": "Worker HTTP (otelresty)",
-	})
+type MongoBulkUpdateItem struct {
+	ID   string `json:"id" binding:"required"`
+	Text string `json:"text"`
+}
+
+type MongoBulkUpdateRequest struct {
+	Updates []MongoBulkUpdateItem `json:"updates" binding:"required,dive"`
 }
 
 func handleMessageMongo(c *gin.Context) {
@@ -268,26 +162,15 @@ func handleMessageMongo(c *gin.Context) {
 		return
 	}
 	idHex := ""
-	if oid, ok := res.InsertedID.(bson.ObjectID); ok {
+	if oid, ok := res.InsertedID.(primitive.ObjectID); ok {
 		idHex = oid.Hex()
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "stored",
 		"trace_id": getTraceIDFromContext(ctx),
-		"endpoint": "MongoDB",
+		"endpoint": "MongoDB (v1)",
 		"id":       idHex,
 	})
-}
-
-// MongoIDRequest is used for update/read/delete by document _id.
-type MongoIDRequest struct {
-	ID string `json:"id" binding:"required"`
-}
-
-// MongoUpdateRequest adds optional text for update.
-type MongoUpdateRequest struct {
-	ID   string `json:"id" binding:"required"`
-	Text string `json:"text"`
 }
 
 func handleMessageMongoUpdate(c *gin.Context) {
@@ -296,7 +179,7 @@ func handleMessageMongoUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	oid, err := bson.ObjectIDFromHex(req.ID)
+	oid, err := primitive.ObjectIDFromHex(req.ID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
@@ -316,7 +199,7 @@ func handleMessageMongoUpdate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "updated",
 		"trace_id": getTraceIDFromContext(ctx),
-		"endpoint": "MongoDB Update",
+		"endpoint": "MongoDB Update (v1)",
 	})
 }
 
@@ -326,7 +209,7 @@ func handleMessageMongoRead(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	oid, err := bson.ObjectIDFromHex(req.ID)
+	oid, err := primitive.ObjectIDFromHex(req.ID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
@@ -350,7 +233,7 @@ func handleMessageMongoRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "read",
 		"trace_id": getTraceIDFromContext(ctx),
-		"endpoint": "MongoDB Read",
+		"endpoint": "MongoDB Read (v1)",
 		"text":     doc.Text,
 	})
 }
@@ -361,7 +244,7 @@ func handleMessageMongoDelete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	oid, err := bson.ObjectIDFromHex(req.ID)
+	oid, err := primitive.ObjectIDFromHex(req.ID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
@@ -380,13 +263,8 @@ func handleMessageMongoDelete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "deleted",
 		"trace_id": getTraceIDFromContext(ctx),
-		"endpoint": "MongoDB Delete",
+		"endpoint": "MongoDB Delete (v1)",
 	})
-}
-
-// MongoBulkInsertRequest is used for BulkWrite insert (multiple InsertOneModel).
-type MongoBulkInsertRequest struct {
-	Texts []string `json:"texts" binding:"required,dive,min=1"`
 }
 
 func handleMessageMongoBulkInsert(c *gin.Context) {
@@ -407,23 +285,13 @@ func handleMessageMongoBulkInsert(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to bulk insert"})
 		return
 	}
+	// v1 driver BulkWriteResult has InsertedCount but no InsertedIDs slice; return count only.
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "bulk_stored",
 		"trace_id": getTraceIDFromContext(ctx),
-		"endpoint": "MongoDB Bulk Insert",
+		"endpoint": "MongoDB Bulk Insert (v1)",
 		"count":    res.InsertedCount,
 	})
-}
-
-// MongoBulkUpdateItem is one id+text pair for bulk update.
-type MongoBulkUpdateItem struct {
-	ID   string `json:"id" binding:"required"`
-	Text string `json:"text"`
-}
-
-// MongoBulkUpdateRequest is used for BulkWrite update (multiple UpdateOneModel).
-type MongoBulkUpdateRequest struct {
-	Updates []MongoBulkUpdateItem `json:"updates" binding:"required,dive"`
 }
 
 func handleMessageMongoBulkUpdate(c *gin.Context) {
@@ -436,7 +304,7 @@ func handleMessageMongoBulkUpdate(c *gin.Context) {
 	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
 	models := make([]mongo.WriteModel, 0, len(req.Updates))
 	for _, u := range req.Updates {
-		oid, err := bson.ObjectIDFromHex(u.ID)
+		oid, err := primitive.ObjectIDFromHex(u.ID)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id: " + u.ID})
 			return
@@ -452,7 +320,7 @@ func handleMessageMongoBulkUpdate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":          "bulk_updated",
 		"trace_id":        getTraceIDFromContext(ctx),
-		"endpoint":        "MongoDB Bulk Update",
+		"endpoint":        "MongoDB Bulk Update (v1)",
 		"modified_count":  res.ModifiedCount,
 		"matched_count":   res.MatchedCount,
 	})

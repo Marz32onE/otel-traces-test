@@ -93,6 +93,22 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  api-mongo-v1:
+    build:
+      context: .
+      dockerfile: api-mongo-v1/Dockerfile
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-otel-collector:4317}
+      - MONGODB_URI=mongodb://mongodb:27017
+    ports:
+      - "8089:8089"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
   worker:
     build:
       context: .
@@ -131,12 +147,14 @@ services:
       context: ./frontend
       args:
         - VITE_API_URL=http://localhost:8088
+        - VITE_API_V1_URL=http://localhost:8089
         - VITE_WS_URL=ws://localhost:8082
         - VITE_OTEL_COLLECTOR_URL=http://localhost:4318
     ports:
       - "3000:3000"
     depends_on:
       - api
+      - api-mongo-v1
       - worker
     restart: unless-stopped
 

@@ -5,7 +5,7 @@ import { API_URL } from "../constants/env";
 import { DEFAULT_MONGO_ID, ENDPOINTS_NEED_TEXT } from "../constants/endpoints";
 import type { LastTrace, SendPayload, ApiResponse, SendToEndpointOptions } from "../types";
 
-export function useMessageSender() {
+export function useMessageSender(baseUrl: string = API_URL) {
   const [lastTrace, setLastTrace] = useState<LastTrace>(null);
   const [lastMongoId, setLastMongoId] = useState<string | null>(null);
   const [lastBulkInsertIds, setLastBulkInsertIds] = useState<string[]>([]);
@@ -28,7 +28,7 @@ export function useMessageSender() {
       const needsText = (ENDPOINTS_NEED_TEXT as readonly string[]).includes(endpoint);
       if (needsText && (!payload.text || !payload.text.trim())) return;
 
-      const url = `${API_URL}${endpoint}`;
+      const url = `${baseUrl}${endpoint}`;
       const span = tracer.startSpan(spanName, {
         kind: SpanKind.CLIENT,
         attributes: {
@@ -68,8 +68,8 @@ export function useMessageSender() {
             setLastMongoId(data.ids[data.ids.length - 1]);
             setMongoId(data.ids[data.ids.length - 1]);
           }
-          if (data.endpoint === "MongoDB Delete") setLastMongoId(null);
-          if (data.endpoint === "MongoDB Bulk Insert") setLastBulkInsertIds([]);
+          if (data.endpoint?.includes("MongoDB Delete")) setLastMongoId(null);
+          if (data.endpoint?.includes("MongoDB Bulk Insert")) setLastBulkInsertIds([]);
         }
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -80,7 +80,7 @@ export function useMessageSender() {
         span.end();
       }
     },
-    [],
+    [baseUrl],
   );
 
   return { sendToEndpoint, lastTrace, lastMongoId, lastBulkInsertIds, mongoId, setMongoId };

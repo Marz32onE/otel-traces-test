@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Marz32onE/instrumentation-go/otel-mongo/otelmongo"
+	otelmongo "github.com/Marz32onE/instrumentation-go/otel-mongo/v2"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
 	"go.mongodb.org/mongo-driver/v2/bson"
