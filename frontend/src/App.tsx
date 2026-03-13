@@ -21,6 +21,7 @@ export default function App() {
     sendToEndpoint,
     lastTrace,
     lastMongoId,
+    lastBulkInsertIds,
     mongoId,
     setMongoId,
   } = useMessageSender();
@@ -154,6 +155,32 @@ export default function App() {
               id: mongoId.trim() || DEFAULT_MONGO_ID,
             })
           }
+          onSendBulkInsert={() =>
+            sendToEndpoint(
+              "/api/message-mongo-bulk-insert",
+              "send-message-mongo-bulk-insert",
+              { texts: ["Bulk insert 1", "Bulk insert 2", "Bulk insert 3"] },
+            )
+          }
+          onSendBulkUpdate={() => {
+            const id = mongoId.trim() || DEFAULT_MONGO_ID;
+            const text = mongoInputText.trim() || "Bulk updated";
+            const updates =
+              lastBulkInsertIds.length >= 2
+                ? lastBulkInsertIds.slice(0, 3).map((bulkId, i) => ({
+                    id: bulkId,
+                    text: i === 0 ? text : `Updated ${i + 1}`,
+                  }))
+                : [
+                    { id, text },
+                    { id, text: "Bulk update 2" },
+                  ];
+            sendToEndpoint(
+              "/api/message-mongo-bulk-update",
+              "send-message-mongo-bulk-update",
+              { updates },
+            );
+          }}
         />
       </div>
 

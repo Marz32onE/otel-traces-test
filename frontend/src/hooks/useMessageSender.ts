@@ -8,6 +8,7 @@ import type { LastTrace, SendPayload, ApiResponse, SendToEndpointOptions } from 
 export function useMessageSender() {
   const [lastTrace, setLastTrace] = useState<LastTrace>(null);
   const [lastMongoId, setLastMongoId] = useState<string | null>(null);
+  const [lastBulkInsertIds, setLastBulkInsertIds] = useState<string[]>([]);
   const [mongoId, setMongoId] = useState(DEFAULT_MONGO_ID);
 
   const sendToEndpoint = useCallback(
@@ -18,7 +19,12 @@ export function useMessageSender() {
       options?: SendToEndpointOptions,
     ) => {
       const payload = body ?? {};
-      if (!("id" in payload) && !("text" in payload)) return;
+      const hasKnown =
+        "id" in payload ||
+        "text" in payload ||
+        (Array.isArray(payload.texts) && payload.texts.length > 0) ||
+        (Array.isArray(payload.updates) && payload.updates.length > 0);
+      if (!hasKnown) return;
       const needsText = (ENDPOINTS_NEED_TEXT as readonly string[]).includes(endpoint);
       if (needsText && (!payload.text || !payload.text.trim())) return;
 
@@ -52,13 +58,18 @@ export function useMessageSender() {
           setLastTrace({
             traceId: data.trace_id,
             endpoint: data.endpoint ?? endpoint,
-            id: data.id,
+            id: data.id ?? (Array.isArray(data.ids) && data.ids.length > 0 ? data.ids[data.ids.length - 1] : undefined),
           });
           if (data.id) {
             setLastMongoId(data.id);
             setMongoId(data.id);
+          } else if (Array.isArray(data.ids) && data.ids.length > 0) {
+            setLastBulkInsertIds(data.ids);
+            setLastMongoId(data.ids[data.ids.length - 1]);
+            setMongoId(data.ids[data.ids.length - 1]);
           }
           if (data.endpoint === "MongoDB Delete") setLastMongoId(null);
+          if (data.endpoint === "MongoDB Bulk Insert") setLastBulkInsertIds([]);
         }
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -72,5 +83,5 @@ export function useMessageSender() {
     [],
   );
 
-  return { sendToEndpoint, lastTrace, lastMongoId, mongoId, setMongoId };
+  return { sendToEndpoint, lastTrace, lastMongoId, lastBulkInsertIds, mongoId, setMongoId };
 }

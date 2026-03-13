@@ -3,7 +3,7 @@ module github.com/Marz32onE/otel-traces-test/api
 go 1.26
 
 require (
-	github.com/Marz32onE/instrumentation-go/otel-mongo v0.0.0
+	github.com/Marz32onE/instrumentation-go/otel-mongo v0.1.0
 	github.com/Marz32onE/instrumentation-go/otel-nats v0.0.0
 	github.com/dubonzi/otelresty v1.6.0
 	github.com/gin-contrib/cors v1.7.2

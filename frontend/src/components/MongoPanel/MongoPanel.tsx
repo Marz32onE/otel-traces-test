@@ -11,6 +11,8 @@ type MongoPanelProps = {
   onSendUpdate: () => void;
   onSendRead: () => void;
   onSendDelete: () => void;
+  onSendBulkInsert: () => void;
+  onSendBulkUpdate: () => void;
   onMongoKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
 };
 
@@ -23,6 +25,8 @@ export function MongoPanel({
   onSendUpdate,
   onSendRead,
   onSendDelete,
+  onSendBulkInsert,
+  onSendBulkUpdate,
   onMongoKeyDown,
 }: MongoPanelProps) {
   return (
@@ -81,6 +85,20 @@ export function MongoPanel({
           title="以指定 id 刪除文件（Delete）"
         >
           刪除
+        </button>
+        <button
+          style={{ ...styles.button, ...styles.buttonTertiary }}
+          onClick={onSendBulkInsert}
+          title="BulkWrite：插入多筆（每筆帶 _oteltrace）"
+        >
+          Bulk 插入
+        </button>
+        <button
+          style={{ ...styles.button, ...styles.buttonMongo }}
+          onClick={onSendBulkUpdate}
+          title="BulkWrite：依多組 id 更新（每筆帶 _oteltrace）"
+        >
+          Bulk 更新
         </button>
       </div>
       <div style={styles.traceFlow}>

@@ -146,7 +146,7 @@ func main() {
 	pipeline := mongo.Pipeline{} // no $match: receive all operation types
 
 	// No separate Ping: open Watch with retry. Validates server up + change stream (replica set) in one step.
-	var stream *mongo.ChangeStream
+	var stream *otelmongo.ChangeStream
 	for i := 0; i < 15; i++ {
 		tryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		stream, err = coll.Watch(tryCtx, pipeline, opts)

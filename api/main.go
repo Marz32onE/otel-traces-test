@@ -173,6 +173,8 @@ func main() {
 	r.POST("/api/message-mongo-update", handleMessageMongoUpdate)
 	r.POST("/api/message-mongo-read", handleMessageMongoRead)
 	r.POST("/api/message-mongo-delete", handleMessageMongoDelete)
+	r.POST("/api/message-mongo-bulk-insert", handleMessageMongoBulkInsert)
+	r.POST("/api/message-mongo-bulk-update", handleMessageMongoBulkUpdate)
 
 	log.Println("API server starting on :8088")
 	if err := r.Run(":8088"); err != nil {
@@ -379,5 +381,79 @@ func handleMessageMongoDelete(c *gin.Context) {
 		"status":   "deleted",
 		"trace_id": getTraceIDFromContext(ctx),
 		"endpoint": "MongoDB Delete",
+	})
+}
+
+// MongoBulkInsertRequest is used for BulkWrite insert (multiple InsertOneModel).
+type MongoBulkInsertRequest struct {
+	Texts []string `json:"texts" binding:"required,dive,min=1"`
+}
+
+func handleMessageMongoBulkInsert(c *gin.Context) {
+	var req MongoBulkInsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	models := make([]mongo.WriteModel, 0, len(req.Texts))
+	for _, text := range req.Texts {
+		doc := bson.M{"text": text, "createdAt": time.Now()}
+		models = append(models, mongo.NewInsertOneModel().SetDocument(doc))
+	}
+	res, err := coll.BulkWrite(ctx, models)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to bulk insert"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "bulk_stored",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "MongoDB Bulk Insert",
+		"count":    res.InsertedCount,
+	})
+}
+
+// MongoBulkUpdateItem is one id+text pair for bulk update.
+type MongoBulkUpdateItem struct {
+	ID   string `json:"id" binding:"required"`
+	Text string `json:"text"`
+}
+
+// MongoBulkUpdateRequest is used for BulkWrite update (multiple UpdateOneModel).
+type MongoBulkUpdateRequest struct {
+	Updates []MongoBulkUpdateItem `json:"updates" binding:"required,dive"`
+}
+
+func handleMessageMongoBulkUpdate(c *gin.Context) {
+	var req MongoBulkUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	coll := mongoClient.Database(mongoDBName).Collection(mongoColl)
+	models := make([]mongo.WriteModel, 0, len(req.Updates))
+	for _, u := range req.Updates {
+		oid, err := bson.ObjectIDFromHex(u.ID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id: " + u.ID})
+			return
+		}
+		update := bson.M{"$set": bson.M{"text": u.Text, "updatedAt": time.Now()}}
+		models = append(models, mongo.NewUpdateOneModel().SetFilter(bson.M{"_id": oid}).SetUpdate(update))
+	}
+	res, err := coll.BulkWrite(ctx, models)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to bulk update"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":          "bulk_updated",
+		"trace_id":        getTraceIDFromContext(ctx),
+		"endpoint":        "MongoDB Bulk Update",
+		"modified_count":  res.ModifiedCount,
+		"matched_count":   res.MatchedCount,
 	})
 }
