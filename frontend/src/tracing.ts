@@ -2,19 +2,19 @@ import { trace } from '@opentelemetry/api';
 import { initializeFaro, getWebInstrumentations } from '@grafana/faro-react';
 import { TracingInstrumentation } from '@grafana/faro-web-tracing';
 import { OtlpHttpTransport } from '@grafana/faro-transport-otlp-http';
+import { API_URL, API_V1_URL } from './constants/env';
 
 const OTEL_COLLECTOR_URL =
   import.meta.env.VITE_OTEL_COLLECTOR_URL || 'http://localhost:4318';
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8088';
 
 // Allow trace context (traceparent) to be sent to our API (cross-origin when port differs)
-function apiOriginRegex(): RegExp {
+function originToRegex(url: string): RegExp {
   try {
-    const u = new URL(API_URL);
+    const u = new URL(url);
     const origin = u.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`^${origin}`);
   } catch {
-    return /localhost:8088/;
+    return /^http:\/\/localhost:\d+$/;
   }
 }
 
@@ -28,7 +28,8 @@ initializeFaro({
     ...getWebInstrumentations(),
     new TracingInstrumentation({
       instrumentationOptions: {
-        propagateTraceHeaderCorsUrls: [apiOriginRegex()],
+        // Both API (v2) and API v1 (mongo v1) so trace propagates to each
+        propagateTraceHeaderCorsUrls: [originToRegex(API_URL), originToRegex(API_V1_URL)],
       },
     }),
   ],
