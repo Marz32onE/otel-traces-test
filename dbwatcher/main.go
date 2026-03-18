@@ -193,9 +193,17 @@ func main() {
 			if text == "" {
 				continue
 			}
+			idVal, ok := event.FullDocument["_id"]
+			if !ok {
+				continue
+			}
+			oid, ok := idVal.(bson.ObjectID)
+			if !ok {
+				continue
+			}
 			rawDoc, _ := bson.Marshal(event.FullDocument)
 			pubCtx = otelmongo.ContextFromDocument(sigCtx, rawDoc)
-			payload = []byte(text)
+			payload, _ = json.Marshal(map[string]string{"op": "change", "id": oid.Hex()})
 		case "delete":
 			idStr := ""
 			if id, ok := event.DocumentKey["_id"]; ok {
@@ -204,7 +212,6 @@ func main() {
 				}
 			}
 			payload, _ = json.Marshal(map[string]string{"op": "delete", "id": idStr})
-			// delete has no fullDocument, so no _oteltrace to propagate
 		default:
 			continue
 		}
@@ -213,6 +220,6 @@ func main() {
 			log.Printf("Publish to NATS: %v", err)
 			continue
 		}
-		log.Printf("Forwarded to %s [%s]: %s", subject, event.OperationType, string(payload))
+		log.Printf("Forwarded to %s [%s] id-notify: %s", subject, event.OperationType, string(payload))
 	}
 }

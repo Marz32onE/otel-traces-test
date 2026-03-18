@@ -60,8 +60,8 @@ if docker compose logs dbwatcher --tail 50 2>/dev/null | grep -q "Forwarded to m
   echo ""
   echo "  OK: dbwatcher forwarded message to NATS"
 fi
-if docker compose logs worker --tail 50 2>/dev/null | grep -q "\[DB\] received"; then
-  echo "  OK: worker received message from messages.db"
+if docker compose logs worker --tail 80 2>/dev/null | grep -qE "\[DB\] id=.*fetched|\[DB\] delete id="; then
+  echo "  OK: worker handled messages.db (fetch or delete)"
 fi
 
 echo ""

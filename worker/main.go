@@ -12,11 +12,13 @@ import (
 	"sync"
 	"time"
 
+	otelmongo "github.com/Marz32onE/instrumentation-go/otel-mongo/v2"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
 	"github.com/Marz32onE/instrumentation-go/otel-websocket"
 	"github.com/gorilla/websocket"
 	nats "github.com/nats-io/nats.go"
+	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -142,6 +144,14 @@ type notifyBody struct {
 	Text string `json:"text"`
 }
 
+// dbNotify is published by dbwatcher on messages.db: change = fetch doc by id; delete = no fetch.
+type dbNotify struct {
+	Op string `json:"op"`
+	ID string `json:"id"`
+}
+
+const mongoDBName, mongoColl = "messaging", "messages"
+
 func notifyHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -189,6 +199,21 @@ func main() {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
 	defer natsConn.Close()
+
+	mongoURI := os.Getenv("MONGODB_URI")
+	if mongoURI == "" {
+		mongoURI = "mongodb://localhost:27017"
+	}
+	mongoClient, err := otelmongo.NewClient(mongoURI, otelmongo.WithTracerProvider(tp), otelmongo.WithPropagators(prop))
+	if err != nil {
+		log.Fatalf("MongoDB connect: %v", err)
+	}
+	defer func() {
+		disconnectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = mongoClient.Disconnect(disconnectCtx)
+	}()
+	msgColl := mongoClient.Database(mongoDBName).Collection(mongoColl)
 
 	js, err := oteljetstream.New(natsConn)
 	if err != nil {
@@ -292,8 +317,45 @@ func main() {
 		log.Fatalf("CreateOrUpdateConsumer(worker-db): %v", err)
 	}
 	ccDB, err := consDB.Consume(func(m oteljetstream.MsgWithContext) {
-		log.Printf("[DB] received: %s", string(m.Data()))
-		broadcastWithTrace(m.Context(), m.Data(), "DB")
+		var n dbNotify
+		if err := json.Unmarshal(m.Data(), &n); err != nil {
+			log.Printf("[DB] bad JSON: %v", err)
+			_ = m.Ack()
+			return
+		}
+		switch n.Op {
+		case "delete":
+			log.Printf("[DB] delete id=%s", n.ID)
+			broadcastWithTrace(m.Context(), m.Data(), "DB")
+		case "change":
+			if n.ID == "" {
+				_ = m.Ack()
+				return
+			}
+			oid, err := bson.ObjectIDFromHex(n.ID)
+			if err != nil {
+				log.Printf("[DB] invalid id %q: %v", n.ID, err)
+				_ = m.Ack()
+				return
+			}
+			var doc struct {
+				Text string `bson:"text"`
+			}
+			sr := msgColl.FindOneByID(m.Context(), oid)
+			if err := sr.Decode(&doc); err != nil {
+				log.Printf("[DB] FindOne %s: %v", n.ID, err)
+				_ = m.Ack()
+				return
+			}
+			if doc.Text == "" {
+				_ = m.Ack()
+				return
+			}
+			log.Printf("[DB] id=%s fetched, broadcasting", n.ID)
+			broadcastWithTrace(m.Context(), []byte(doc.Text), "DB")
+		default:
+			log.Printf("[DB] unknown op %q", n.Op)
+		}
 		_ = m.Ack()
 	})
 	if err != nil {

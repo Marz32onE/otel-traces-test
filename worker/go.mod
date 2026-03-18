@@ -3,10 +3,12 @@ module github.com/Marz32onE/otel-traces-test/worker
 go 1.26
 
 require (
+	github.com/Marz32onE/instrumentation-go/otel-mongo/v2 v2.0.0
 	github.com/Marz32onE/instrumentation-go/otel-nats v0.0.0
 	github.com/Marz32onE/instrumentation-go/otel-websocket v0.0.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.49.0
+	go.mongodb.org/mongo-driver/v2 v2.5.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0
 	go.opentelemetry.io/otel v1.42.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.42.0
@@ -15,6 +17,7 @@ require (
 )
 
 replace (
+	github.com/Marz32onE/instrumentation-go/otel-mongo/v2 => ../pkg/instrumentation-go/otel-mongo/v2
 	github.com/Marz32onE/instrumentation-go/otel-nats => ../pkg/instrumentation-go/otel-nats
 	github.com/Marz32onE/instrumentation-go/otel-websocket => ../pkg/instrumentation-go/otel-websocket
 )
@@ -27,16 +30,22 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
-	github.com/klauspost/compress v1.18.3 // indirect
+	github.com/klauspost/compress v1.18.4 // indirect
 	github.com/nats-io/nkeys v0.4.12 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
+	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
+	github.com/xdg-go/scram v1.2.0 // indirect
+	github.com/xdg-go/stringprep v1.0.4 // indirect
+	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/v2/mongo/otelmongo v0.0.0-20260305012045-6c6e31856f38 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.42.0 // indirect
 	go.opentelemetry.io/otel/metric v1.42.0 // indirect
 	go.opentelemetry.io/otel/trace v1.42.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260209200024-4cfbd4190f57 // indirect
