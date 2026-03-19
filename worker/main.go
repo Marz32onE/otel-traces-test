@@ -5,10 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -16,16 +13,14 @@ import (
 	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
 	"github.com/Marz32onE/instrumentation-go/otel-websocket"
+	"github.com/Marz32onE/otel-traces-test/pkg/otelsetup"
 	"github.com/gorilla/websocket"
 	nats "github.com/nats-io/nats.go"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -58,57 +53,6 @@ func broadcastWithTrace(ctx context.Context, body []byte, apiName string) {
 			delete(clients, conn)
 		}
 	}
-}
-
-// initOTEL creates an OTLP TracerProvider and propagator, sets globals, and returns them
-// so the app can pass them into instrumentation (otelnats, otelwebsocket) and defer shutdown.
-func initOTEL(endpoint string, attrs ...attribute.KeyValue) (*sdktrace.TracerProvider, propagation.TextMapPropagator, error) {
-	if endpoint == "" {
-		endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	}
-	if endpoint == "" {
-		endpoint = "localhost:4317"
-	}
-	useHTTP := useHTTPEndpoint(endpoint)
-	ctx := context.Background()
-	var exp sdktrace.SpanExporter
-	var err error
-	if useHTTP {
-		exp, err = otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(endpoint), otlptracehttp.WithInsecure())
-	} else {
-		exp, err = otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint(endpoint), otlptracegrpc.WithInsecure())
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	res, err := resource.New(ctx, resource.WithAttributes(attrs...))
-	if err != nil {
-		return nil, nil, err
-	}
-	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp), sdktrace.WithResource(res))
-	prop := propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{})
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(prop)
-	return tp, prop, nil
-}
-
-func useHTTPEndpoint(endpoint string) bool {
-	s := strings.TrimSpace(endpoint)
-	if s == "" {
-		return false
-	}
-	if u, err := url.Parse(s); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-		return true
-	}
-	_, port, _ := func(h string) (string, string, error) {
-		u, err := url.Parse("//" + h)
-		if err != nil {
-			return "", "", err
-		}
-		return u.Hostname(), u.Port(), nil
-	}(s)
-	p, _ := strconv.Atoi(port)
-	return p == 4318
 }
 
 func wsHandler(tp *sdktrace.TracerProvider, prop propagation.TextMapPropagator) http.HandlerFunc {
@@ -172,10 +116,18 @@ func notifyHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	ctx := context.Background()
-	tp, prop, err := initOTEL("", attribute.String("service.name", "worker"), attribute.String("service.version", "0.0.1"))
+	tp, err := otelsetup.InitWithOptions(
+		"",
+		[]attribute.KeyValue{
+			attribute.String("service.name", "worker"),
+			attribute.String("service.version", "0.0.1"),
+		},
+		otelsetup.WithSkipDBOperations([]string{"getMore"}),
+	)
 	if err != nil {
-		log.Fatalf("initOTEL: %v", err)
+		log.Fatalf("otelsetup.InitWithOptions: %v", err)
 	}
+	prop := otel.GetTextMapPropagator()
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
