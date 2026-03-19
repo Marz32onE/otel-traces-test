@@ -14,7 +14,6 @@ require (
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.65.0
 	go.opentelemetry.io/otel v1.42.0
-	go.opentelemetry.io/otel/sdk v1.42.0
 	go.opentelemetry.io/otel/trace v1.42.0
 )
 
@@ -66,6 +65,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.42.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.42.0 // indirect
 	go.opentelemetry.io/otel/metric v1.42.0 // indirect
+	go.opentelemetry.io/otel/sdk v1.42.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	golang.org/x/arch v0.23.0 // indirect
 	golang.org/x/crypto v0.48.0 // indirect

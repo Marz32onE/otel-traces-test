@@ -18,6 +18,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -117,6 +119,7 @@ func main() {
 	defer stop()
 
 	log.Println("dbwatcher: watching MongoDB CRUD, publishing to NATS JetStream subject", subject)
+	tracer := otel.Tracer("dbwatcher")
 	for {
 		if !stream.Next(sigCtx) {
 			if err := stream.Err(); err != nil {
@@ -125,9 +128,9 @@ func main() {
 			break
 		}
 		var event struct {
-			OperationType string   `bson:"operationType"`
-			FullDocument  bson.M   `bson:"fullDocument"`
-			DocumentKey   bson.M   `bson:"documentKey"`
+			OperationType string `bson:"operationType"`
+			FullDocument  bson.M `bson:"fullDocument"`
+			DocumentKey   bson.M `bson:"documentKey"`
 		}
 		if err := stream.Decode(&event); err != nil {
 			log.Printf("Decode: %v", err)
@@ -135,7 +138,8 @@ func main() {
 		}
 
 		var payload []byte
-		var pubCtx = sigCtx
+		var originSpanCtx trace.SpanContext
+		var hasOriginLink bool
 
 		switch event.OperationType {
 		case "insert", "update", "replace":
@@ -151,8 +155,7 @@ func main() {
 			if !ok {
 				continue
 			}
-			rawDoc, _ := bson.Marshal(event.FullDocument)
-			pubCtx = otelmongo.ContextFromDocument(sigCtx, rawDoc)
+			originSpanCtx, hasOriginLink = otelmongo.ContextFromDocument(sigCtx, event.FullDocument)
 			payload, _ = json.Marshal(map[string]string{"op": "change", "id": oid.Hex()})
 		case "delete":
 			idStr := ""
@@ -166,10 +169,27 @@ func main() {
 			continue
 		}
 
+		spanOpts := []trace.SpanStartOption{
+			trace.WithSpanKind(trace.SpanKindProducer),
+			trace.WithAttributes(
+				attribute.String("messaging.system", "nats"),
+				attribute.String("messaging.destination.name", subject),
+				attribute.String("messaging.operation.name", "publish"),
+				attribute.String("db.operation.name", event.OperationType),
+			),
+		}
+		if hasOriginLink {
+			spanOpts = append(spanOpts, trace.WithLinks(trace.Link{SpanContext: originSpanCtx}))
+		}
+		pubCtx, span := tracer.Start(sigCtx, "publish "+subject, spanOpts...)
 		if _, err := js.Publish(pubCtx, subject, payload); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			span.End()
 			log.Printf("Publish to NATS: %v", err)
 			continue
 		}
+		span.End()
 		log.Printf("Forwarded to %s [%s] id-notify: %s", subject, event.OperationType, string(payload))
 	}
 }

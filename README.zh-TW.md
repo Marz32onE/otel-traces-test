@@ -146,11 +146,12 @@ cd otel-traces-test
 # 若已 clone 但未拉 submodule
 git submodule update --init
 
-# 啟動所有服務（二擇一）
-docker compose up --build
-# 或使用 Makefile（預設為 podman compose）
+# 啟動所有服務（建議）
 make up
-# 若要用 docker compose： COMPOSE_CMD='docker compose' make up
+# 若要用 docker compose：
+# COMPOSE_CMD='docker compose' make up
+# 或直接：
+# docker compose up --build
 ```
 
 啟動後可開啟：
@@ -202,7 +203,7 @@ curl -s "http://localhost:3200/api/traces/<TRACE_ID>" | head -c 500
 ./scripts/verify-full-path.sh
 ```
 
-需已安裝 `go`、`docker`、`docker compose`。腳本會：建置 api / worker / dbwatcher、`docker compose up -d --build`、等待服務就緒、對 `/api/message`、`/api/message-core`、`/api/message-mongo` 發送請求、檢查 dbwatcher/worker 日誌是否出現轉發與接收、並以 traceparent 呼叫 `/api/message-mongo` 後查詢 Tempo。
+需已安裝 `go`，以及任一 compose runtime：`docker compose`、`podman compose` 或 `podman-compose`。腳本會自動偵測 compose 指令：建置 api / worker / dbwatcher、`up -d --build`、等待服務就緒、對 `/api/message`、`/api/message-core`、`/api/message-mongo` 發送請求、檢查 dbwatcher/worker 日誌是否出現轉發與接收、並以 traceparent 呼叫 `/api/message-mongo` 後查詢 Tempo。
 
 手動驗證 MongoDB 路徑可依序執行：
 
@@ -212,20 +213,19 @@ curl -s -X POST http://localhost:8088/api/message-mongo -H "Content-Type: applic
 # 預期: {"endpoint":"MongoDB","status":"stored","trace_id":"..."}
 
 # 數秒後檢查 dbwatcher 是否轉發、worker 是否收到
-docker compose logs dbwatcher --tail 20   # 應見 "Forwarded to messages.db"
-docker compose logs worker --tail 20       # 應見 "[DB] received"
+make logs SVC=dbwatcher   # 應見 "Forwarded to messages.db"
+make logs SVC=worker       # 應見 "[DB] received"
 ```
 
 ### 停止與清理
 
 ```bash
-docker compose down
-# 或連同 volumes 一併刪除
-docker compose down -v
-
-# 使用 Makefile 時
 make down
-make clean   # 含 -v
+make clean   # 含 volumes
+
+# 若你使用 Docker，也可直接：
+# docker compose down
+# docker compose down -v
 ```
 
 ---
@@ -318,7 +318,9 @@ Clone 後執行 `git submodule update --init` 以取得 `pkg/instrumentation-go`
 重啟 `otel-collector` 後，API 可能出現 `dial tcp ...: no route to host`（Docker 網路變更）。一併重啟依賴服務：
 
 ```bash
-docker compose restart otel-collector api worker dbwatcher
+make restart
+# 若要用 docker compose：
+# COMPOSE_CMD='docker compose' make restart
 ```
 
 ### Worker 的 span 沒有出現在 Tempo
@@ -330,8 +332,9 @@ docker compose restart otel-collector api worker dbwatcher
 強制無快取重建：
 
 ```bash
-docker compose build --no-cache frontend
-docker compose up -d frontend
+make build && make up
+# 若要用 docker compose：
+# COMPOSE_CMD='docker compose' make build && COMPOSE_CMD='docker compose' make up
 ```
 
 ### Tempo 查詢 trace 回傳 404

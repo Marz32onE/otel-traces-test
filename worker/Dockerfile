@@ -1,6 +1,7 @@
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
 COPY pkg/instrumentation-go ./pkg/instrumentation-go/
+COPY pkg/otelsetup ./pkg/otelsetup/
 COPY worker/go.mod worker/go.sum ./worker/
 RUN cd worker && go mod download
 COPY worker/ ./worker/

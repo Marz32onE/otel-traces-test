@@ -142,9 +142,12 @@ cd otel-traces-test
 # If already cloned without submodules
 git submodule update --init
 
-# Start all services
-docker compose up --build
-# Or: make up   (default: podman compose; use COMPOSE_CMD='docker compose' for Docker)
+# Start all services (recommended)
+make up
+# Docker users:
+# COMPOSE_CMD='docker compose' make up
+# Or directly:
+# docker compose up --build
 ```
 
 | Service          | URL                     |
@@ -191,23 +194,24 @@ For a full trace including the frontend, send a message from http://localhost:30
 ./scripts/verify-full-path.sh
 ```
 
-Requires `go`, `docker`, `docker compose`. The script builds, brings up Compose, hits all API endpoints, and checks dbwatcher/worker logs and Tempo.
+Requires `go` and one compose runtime: `docker compose`, `podman compose`, or `podman-compose`. The script auto-detects compose command, builds, brings up services, hits all API endpoints, and checks dbwatcher/worker logs and Tempo.
 
 Manual MongoDB path check:
 
 ```bash
 curl -s -X POST http://localhost:8088/api/message-mongo -H "Content-Type: application/json" -d '{"text":"mongo-e2e"}'
-docker compose logs dbwatcher --tail 20
-docker compose logs worker --tail 20
+make logs SVC=dbwatcher
+make logs SVC=worker
 ```
 
 ### Stop and clean
 
 ```bash
-docker compose down
-docker compose down -v   # with volumes
 make down
-make clean   # with -v
+make clean   # with volumes
+# Docker users can also run:
+# docker compose down
+# docker compose down -v
 ```
 
 ---
@@ -295,9 +299,9 @@ After clone run `git submodule update --init` for `pkg/instrumentation-go`.
 
 ## Troubleshooting
 
-- **API traces disappear after Collector restart:** Restart dependent services: `docker compose restart otel-collector api worker dbwatcher`.
+- **API traces disappear after Collector restart:** Restart dependent services: `make restart` (or `COMPOSE_CMD='docker compose' make restart`).
 - **Worker spans missing in Tempo:** Set `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` in `docker-compose.yml`.
-- **Frontend changes not applied:** `docker compose build --no-cache frontend && docker compose up -d frontend`.
+- **Frontend changes not applied:** `COMPOSE_CMD='docker compose' make build && COMPOSE_CMD='docker compose' make up` (or podman defaults: `make build && make up`).
 - **Tempo returns 404 for trace:** Wait a few seconds after sending then query again.
 - **Makefile with Docker:** `COMPOSE_CMD='docker compose' make up`.
 

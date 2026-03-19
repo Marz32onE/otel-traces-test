@@ -5,7 +5,7 @@ description: Enforces build-and-test verification after every code or config cha
 
 # Verify Changes
 
-**When to run**: After **every** code or config change in this repo (api, worker, frontend, pkg/natstrace, pkg/nats.go, Docker, OTel/Tempo). The agent must self-verify before marking any task done.
+**When to run**: After **every** code or config change in this repo (api, worker, dbwatcher, frontend, pkg/instrumentation-go, Docker/Podman, OTel/Tempo). The agent must self-verify before marking any task done.
 
 Every change MUST pass a verification cycle before completion. Never consider a task done on code edits alone.
 
@@ -43,7 +43,7 @@ Decide what to verify from which files were edited. Then run the matching steps.
 | Build | `cd api && go build -o /dev/null .` |
 | Tests | `cd api && go test ./...` (if the module has tests) |
 | Lint | ReadLints on edited `api/**` files; if `.golangci.yml` exists in api, run `golangci-lint run ./...` |
-| Run (if compose up) | `docker compose up -d --build api` then `docker compose logs api --tail 10` |
+| Run (if compose up) | `<compose> up -d --build api` then `<compose> logs api --tail 10` |
 
 If `api/main.go` was changed, also run **End-to-End Trace Verification** below.
 
@@ -55,17 +55,17 @@ If `api/main.go` was changed, also run **End-to-End Trace Verification** below.
 | Build | `cd worker && go build -o /dev/null .` |
 | Tests | `cd worker && go test ./...` (if the module has tests) |
 | Lint | ReadLints on edited `worker/**` files; if `.golangci.yml` exists in worker, run `golangci-lint run ./...` |
-| Run (if compose up) | `docker compose up -d --build worker` then `docker compose logs worker --tail 10` |
+| Run (if compose up) | `<compose> up -d --build worker` then `<compose> logs worker --tail 10` |
 
-### 3. Go — natstrace (`pkg/natstrace/**/*.go`)
+### 3. Go — instrumentation packages (`pkg/instrumentation-go/**`)
 
 | Step | Command / check |
 |------|------------------|
-| Tidy (if go.mod/sum changed) | `cd pkg/natstrace && go mod tidy` |
-| Build | `cd pkg/natstrace && go build ./...` |
-| **Unit tests** | `cd pkg/natstrace && go test ./...` — **must pass** |
-| **golangci-lint** | `cd pkg/natstrace && golangci-lint run ./...` — **must pass** (install via `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest` if missing) |
-| Lint | ReadLints on edited `pkg/natstrace/**` files |
+| Tidy (if go.mod/sum changed) | run `go mod tidy` in the affected module directory (e.g. `pkg/instrumentation-go/otel-mongo/v2`) |
+| Build | run `go build ./...` in the affected module directory |
+| **Unit tests** | run `go test ./...` in the affected module directory — **must pass** |
+| **golangci-lint** | run `golangci-lint run ./...` in the affected module directory — **must pass** |
+| Lint | ReadLints on edited `pkg/instrumentation-go/**` files |
 
 ### 4. Shared Go — NATS (`pkg/nats.go/**`)
 
@@ -76,14 +76,14 @@ cd api    && go build -o /dev/null . && \
 cd ../worker && go build -o /dev/null .
 ```
 
-If compose is up: `docker compose up -d --build api worker`.
+If compose is up: use your compose command (`docker compose`, `podman compose`, or `podman-compose`) and run `up -d --build api worker`.
 
 ### 5. Frontend (`frontend/src/**`, `frontend/package.json`, `frontend/vite.config.js`, etc.)
 
 | Step | Command / check |
 |------|------------------|
 | Lint | ReadLints on edited frontend files |
-| Run (if compose up) | `docker compose up -d --build frontend` then `sleep 3` and `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` → expect 200 |
+| Run (if compose up) | `<compose> up -d --build frontend` then `sleep 3` and `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` → expect 200 |
 
 If `frontend/src/App.tsx` or `frontend/src/tracing.ts` was changed, also run **End-to-End Trace Verification**.
 
@@ -91,9 +91,9 @@ If `frontend/src/App.tsx` or `frontend/src/tracing.ts` was changed, also run **E
 
 | Step | Command / check |
 |------|------------------|
-| Up | `docker compose up -d` (add `--build` if Dockerfile or compose changed) |
-| All Up | `docker compose ps` — no service in Exit/Failed; grep for non-"Up" status should show no service rows |
-| Logs | For any touched service: `docker compose logs --tail 5 <service>` and ensure no `error`/`fatal`/`panic` |
+| Up | `<compose> up -d` (add `--build` if Dockerfile or compose changed) |
+| All Up | `<compose> ps` — no service in Exit/Failed; grep for non-"Up" status should show no service rows |
+| Logs | For any touched service: `<compose> logs --tail 5 <service>` and ensure no `error`/`fatal`/`panic` |
 
 If `docker-compose.yml`, `otel-collector-config.yaml`, or `tempo.yaml` was changed, also run **End-to-End Trace Verification**.
 
@@ -148,10 +148,10 @@ If the trace query returns 404 or no api spans, the tracing pipeline is broken �
 
 | Check | Evidence |
 |-------|----------|
-| Go build | Exit code 0 for `go build -o /dev/null .` (or `go build ./...` in pkg/natstrace) in the right module |
+| Go build | Exit code 0 for `go build -o /dev/null .` (or `go build ./...` in the right module) |
 | Go unit tests | Exit code 0 for `go test ./...` in the changed module (required when any .go file was edited) |
-| Go lint | Exit code 0 for `golangci-lint run ./...` where the module has `.golangci.yml` (e.g. pkg/natstrace) |
-| Services running | `docker compose ps` — all relevant services "Up" |
+| Go lint | Exit code 0 for `golangci-lint run ./...` in the changed module |
+| Services running | `<compose> ps` — all relevant services "Up" |
 | API | `curl` to `/api/message`, `/api/message-v2`, or `/api/message-core` returns `{"status":"published"}` with HTTP 200 |
 | Frontend | `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` returns 200 |
 | Trace pipeline | Tempo `GET /api/traces/<TRACE_ID>` returns JSON with api spans (e.g. producer span + `POST /api/message`) |
@@ -163,14 +163,14 @@ If the trace query returns 404 or no api spans, the tracing pipeline is broken �
 When many areas changed or in doubt, run a full pass:
 
 ```bash
-# Go: natstrace (if pkg/natstrace or Go tracing code was touched)
-cd pkg/natstrace && go test ./... && golangci-lint run ./... && cd ../..
+# Go: instrumentation package(s) (if touched)
+cd pkg/instrumentation-go/otel-nats && go test ./... && golangci-lint run ./... && cd ../../..
 
 # Build
 cd api    && go build -o /dev/null . && cd ../worker && go build -o /dev/null .
 
 # Stack
-docker compose up -d --build api frontend worker
+<compose> up -d --build api frontend worker
 
 # Health
 sleep 3
