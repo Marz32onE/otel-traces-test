@@ -128,18 +128,20 @@ func main() {
 			break
 		}
 		var event struct {
-			OperationType string `bson:"operationType"`
 			FullDocument  bson.M `bson:"fullDocument"`
 			DocumentKey   bson.M `bson:"documentKey"`
+			OperationType string `bson:"operationType"`
 		}
-		if err := stream.Decode(&event); err != nil {
+		eventCtx, err := stream.DecodeWithContext(sigCtx, &event)
+		if err != nil {
 			log.Printf("Decode: %v", err)
 			continue
 		}
 
+		originSpanCtx := trace.SpanContextFromContext(eventCtx)
+		hasOriginLink := originSpanCtx.IsValid()
+
 		var payload []byte
-		var originSpanCtx trace.SpanContext
-		var hasOriginLink bool
 
 		switch event.OperationType {
 		case "insert", "update", "replace":
@@ -155,7 +157,6 @@ func main() {
 			if !ok {
 				continue
 			}
-			originSpanCtx, hasOriginLink = otelmongo.ContextFromDocument(sigCtx, event.FullDocument)
 			payload, _ = json.Marshal(map[string]string{"op": "change", "id": oid.Hex()})
 		case "delete":
 			idStr := ""
