@@ -138,9 +138,6 @@ func main() {
 			continue
 		}
 
-		originSpanCtx := trace.SpanContextFromContext(eventCtx)
-		hasOriginLink := originSpanCtx.IsValid()
-
 		var payload []byte
 
 		switch event.OperationType {
@@ -179,10 +176,7 @@ func main() {
 				attribute.String("db.operation.name", event.OperationType),
 			),
 		}
-		if hasOriginLink {
-			spanOpts = append(spanOpts, trace.WithLinks(trace.Link{SpanContext: originSpanCtx}))
-		}
-		pubCtx, span := tracer.Start(sigCtx, "publish "+subject, spanOpts...)
+		pubCtx, span := tracer.Start(eventCtx, "publish "+subject, spanOpts...)
 		if _, err := js.Publish(pubCtx, subject, payload); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
