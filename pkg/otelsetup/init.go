@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	otelmongo "github.com/Marz32onE/instrumentation-go/otel-mongo/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -22,46 +21,10 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// InitOption configures InitWithOptions.
-type InitOption interface {
-	apply(*initConfig)
-}
-
-type initOptionFunc func(*initConfig)
-
-func (f initOptionFunc) apply(c *initConfig) { f(c) }
-
-type initConfig struct {
-	skipDBOperations []string
-}
-
-func newInitConfig(opts []InitOption) *initConfig {
-	cfg := &initConfig{}
-	for _, o := range opts {
-		o.apply(cfg)
-	}
-	return cfg
-}
-
-// WithSkipDBOperations drops spans whose db.operation.name matches one of skipOps
-// (case-insensitive), e.g. "getMore".
-func WithSkipDBOperations(skipOps []string) InitOption {
-	return initOptionFunc(func(c *initConfig) {
-		c.skipDBOperations = append([]string(nil), skipOps...)
-	})
-}
-
 // Init creates an OTLP TracerProvider, sets it and a default propagator (TraceContext + Baggage)
 // on the global otel package, and returns the TracerProvider so the caller can defer Shutdown.
 // Endpoint can be empty to use OTEL_EXPORTER_OTLP_ENDPOINT or "localhost:4317".
 func Init(endpoint string, attrs ...attribute.KeyValue) (*sdktrace.TracerProvider, error) {
-	return InitWithOptions(endpoint, attrs)
-}
-
-// InitWithOptions is like Init, but accepts optional setup behaviors such as
-// filtering noisy DB operation spans before export.
-func InitWithOptions(endpoint string, attrs []attribute.KeyValue, opts ...InitOption) (*sdktrace.TracerProvider, error) {
-	cfg := newInitConfig(opts)
 	if endpoint == "" {
 		endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	}
@@ -86,9 +49,6 @@ func InitWithOptions(endpoint string, attrs []attribute.KeyValue, opts ...InitOp
 	}
 	if err != nil {
 		return nil, err
-	}
-	if len(cfg.skipDBOperations) > 0 {
-		exp = otelmongo.SkipDBOperationsExporter(exp, cfg.skipDBOperations)
 	}
 
 	res, err := resource.New(ctx, resource.WithAttributes(attrs...))

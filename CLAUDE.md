@@ -14,14 +14,17 @@ A full-stack OpenTelemetry distributed tracing demo showing W3C Trace Context (t
 ```bash
 make up            # Start all services (auto-detects docker/podman)
 make down          # Stop all services
+make clean         # Stop and remove containers + volumes (full clean)
 make restart       # Restart all services
 make logs          # Tail all logs; SVC=api for a single service
+make ps            # Show service status
 make verify-trace  # Verify end-to-end trace propagation (API → Mongo → Tempo)
 make up-verify     # Start + verify in one step
+make detect        # Show auto-detected COMPOSE_CMD, DOCKER_CMD, KIND_CLUSTER
 ./scripts/verify-full-path.sh  # Full end-to-end check including all API paths
 ```
 
-Makefile defaults to `podman compose`. Override: `COMPOSE_CMD='docker compose' make up`.
+Makefile auto-detects `docker compose` / `podman-compose` / `podman compose`. Override: `COMPOSE_CMD='docker compose' make up`.
 
 ### Go development (per module)
 Each service (`api/`, `worker/`, `dbwatcher/`) and `pkg/otelsetup/` is a separate Go module.
@@ -31,11 +34,23 @@ Each service (`api/`, `worker/`, `dbwatcher/`) and `pkg/otelsetup/` is a separat
 go vet ./...
 go test ./...
 
-# Lint (from repo root)
+# Lint — requires golangci-lint v2 (.golangci.yml uses version: "2" syntax)
+# From repo root (all modules):
 golangci-lint run ./api/... ./worker/... ./dbwatcher/... ./pkg/...
-# or per module:
+# Per module:
 cd api && golangci-lint run ./...
 ```
+
+### Kubernetes / Kind deployment
+```bash
+make kind-up        # Build images + helm install into Kind cluster
+make kind-down      # Helm uninstall
+make kind-verify    # Wait for pods + curl API via port-forward
+make kind-build     # Build images only and load into Kind
+make kind-install   # Helm upgrade --install only
+```
+
+Helm chart is at `charts/otel-traces-test/`. Kind cluster is auto-detected (override: `KIND_CLUSTER=mycluster`).
 
 ### Frontend development
 ```bash
@@ -53,18 +68,18 @@ git submodule update --init   # First-time or after pulling
 ## Architecture
 
 ### Services
-| Service | Port | Role |
-|---------|------|------|
-| api | 8088 | Gin HTTP entry point; publishes to NATS, calls Worker, writes to MongoDB |
-| api-mongo-v1 | 8089 | Legacy version of api (MongoDB path only) |
-| worker | 8082 | Consumes NATS (JetStream + Core), serves WebSocket (`GET /ws`) + HTTP (`POST /notify`) |
-| dbwatcher | — | Watches MongoDB `messaging.messages` change stream (all CRUD); publishes to NATS `messages.db` |
-| frontend | 3000 | React 18 + Grafana Faro; sends messages, receives via WebSocket |
-| otel-collector | 4317/4318 | OTLP receiver (gRPC/HTTP with CORS for browser); forwards to Tempo |
-| tempo | 3200 | Trace storage backend (**pinned v2.9.0** — v2.10+ is incompatible) |
-| grafana | 3001 | Trace visualization (anonymous Admin; Tempo datasource pre-configured) |
-| nats | 4222 | Message broker with JetStream |
-| mongodb | 27017 | Replica set (required for change streams) |
+| Service | Port | Role | Framework |
+|---------|------|------|-----------|
+| api | 8088 | HTTP entry point; publishes to NATS, calls Worker, writes to MongoDB | Gin + otelgin |
+| api-mongo-v1 | 8089 | Legacy version of api (MongoDB path only) | Gin |
+| worker | 8082 | Consumes NATS (JetStream + Core), serves WebSocket (`GET /ws`) + HTTP (`POST /notify`) | net/http + gorilla/websocket + otelhttp |
+| dbwatcher | — | Watches MongoDB `messaging.messages` change stream (all CRUD); publishes to NATS `messages.db` | daemon (no HTTP) |
+| frontend | 3000 | React 18 + Grafana Faro; sends messages, receives via WebSocket | Vite + React 18 + @grafana/faro |
+| otel-collector | 4317/4318 | OTLP receiver (gRPC/HTTP with CORS for browser); forwards to Tempo | — |
+| tempo | 3200 | Trace storage backend (**pinned v2.9.0** — v2.10+ is incompatible) | — |
+| grafana | 3001 | Trace visualization (anonymous Admin; Tempo datasource pre-configured) | — |
+| nats | 4222 | Message broker with JetStream | — |
+| mongodb | 27017 | Replica set (required for change streams) | — |
 
 ### Why OTel Collector?
 Go services send traces via gRPC directly. The browser must use HTTP OTLP, but Tempo's OTLP receiver does not support CORS. The Collector's HTTP receiver bridges browser → Tempo with CORS support.
@@ -131,6 +146,13 @@ Each package has an `example/` directory showing the full init pattern.
 ## Go Module Layout
 
 Each service has its own `go.mod` using **Go 1.26** and **OpenTelemetry v1.42.0**. Local instrumentation packages are referenced via `replace` directives pointing to `../pkg/instrumentation-go/...`. Dockerfiles use the repo root as build context and copy `pkg/instrumentation-go` into the image.
+
+## Configuration Files
+
+- OTel Collector config: `charts/otel-traces-test/config/otel-collector.yaml` (shared by docker-compose and Helm)
+- Tempo config: `charts/otel-traces-test/config/tempo.yaml`
+- Grafana datasource: `grafana/provisioning/datasources/tempo.yml`
+- golangci-lint: `.golangci.yml` (v2 syntax, linters: errcheck, govet, ineffassign, staticcheck, unused)
 
 ## Troubleshooting
 

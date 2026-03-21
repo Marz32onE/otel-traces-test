@@ -30,16 +30,12 @@ const (
 
 func main() {
 	ctx := context.Background()
-	tp, err := otelsetup.InitWithOptions(
-		"",
-		[]attribute.KeyValue{
-			attribute.String("service.name", "dbwatcher"),
-			attribute.String("service.version", "0.0.1"),
-		},
-		otelsetup.WithSkipDBOperations([]string{"getMore"}),
+	tp, err := otelsetup.Init("",
+		attribute.String("service.name", "dbwatcher"),
+		attribute.String("service.version", "0.0.1"),
 	)
 	if err != nil {
-		log.Fatalf("otelsetup.InitWithOptions: %v", err)
+		log.Fatalf("otelsetup.Init: %v", err)
 	}
 	prop := otel.GetTextMapPropagator()
 	defer func() {
