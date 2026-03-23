@@ -41,6 +41,20 @@ golangci-lint run ./api/... ./worker/... ./dbwatcher/... ./pkg/...
 cd api && golangci-lint run ./...
 ```
 
+### Instrumentation packages (`pkg/instrumentation-go/`)
+Git submodule with independent Go modules (`otel-mongo/`, `otel-mongo/v2/`, `otel-nats/`, `otel-websocket/`).
+Each module has its own `go.mod` — lint and test must run **inside each module directory**.
+
+**MANDATORY: After ANY code change to `pkg/instrumentation-go/`, run these checks before considering the work complete:**
+```bash
+# Per module (run in the module directory that was changed):
+cd pkg/instrumentation-go/otel-mongo && golangci-lint run ./...
+cd pkg/instrumentation-go/otel-mongo/v2 && golangci-lint run ./...
+cd pkg/instrumentation-go/otel-nats && golangci-lint run ./...
+cd pkg/instrumentation-go/otel-websocket && golangci-lint run ./...
+```
+All modules must report **0 issues**. Common failures: `goimports` (stdlib imports must be in a separate group before third-party), `errcheck`, `govet`.
+
 ### Kubernetes / Kind deployment
 ```bash
 make kind-up        # Build images + helm install into Kind cluster
