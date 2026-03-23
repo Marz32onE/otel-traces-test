@@ -157,6 +157,6 @@ Each service has its own `go.mod` using **Go 1.26** and **OpenTelemetry v1.42.0*
 ## Troubleshooting
 
 - **Traces missing after Collector restart**: `docker compose restart otel-collector api worker dbwatcher`
-- **Worker spans missing in Tempo**: Ensure `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` in `docker-compose.yml`
+- **Worker spans missing in Tempo / export errors like `otel-collector/otel-collector/v1/traces`**: The OTLP HTTP exporter applies env first, then options. `WithEndpoint(host:port)` only sets the host; a bad `OTEL_EXPORTER_OTLP_ENDPOINT` like `otel-collector` can leave `URLPath` wrong. Use **`WithEndpointURL`** with a full `http://host:port` (as `otelsetup` does via `otlpHTTPExporterURL`) so Host and Path are consistent. In Docker, bare `otel-collector` defaults to OTLP/HTTP **4318**; use `otel-collector:4317` for gRPC.
 - **Frontend changes not applied**: `docker compose build --no-cache frontend && docker compose up -d frontend`
 - **Tempo returns 404 for trace**: Wait a few seconds after sending, then query again

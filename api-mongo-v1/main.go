@@ -6,8 +6,11 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,14 +42,21 @@ func initOTEL(endpoint string, attrs ...attribute.KeyValue) (*sdktrace.TracerPro
 	if endpoint == "" {
 		endpoint = "localhost:4317"
 	}
-	useHTTP := strings.Contains(endpoint, "4318") || strings.HasPrefix(endpoint, "http")
+	endpoint = strings.TrimSpace(endpoint)
+	useHTTP := useHTTPEndpoint(endpoint)
 	ctx := context.Background()
 	var exp sdktrace.SpanExporter
 	var err error
 	if useHTTP {
-		exp, err = otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(endpoint), otlptracehttp.WithInsecure())
+		exp, err = otlptracehttp.New(ctx,
+			otlptracehttp.WithEndpointURL(otlpHTTPExporterURL(endpoint)),
+			otlptracehttp.WithInsecure(),
+		)
 	} else {
-		exp, err = otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint(endpoint), otlptracegrpc.WithInsecure())
+		exp, err = otlptracegrpc.New(ctx,
+			otlptracegrpc.WithEndpoint(otlpGRPCExporterEndpoint(endpoint)),
+			otlptracegrpc.WithInsecure(),
+		)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -60,6 +70,52 @@ func initOTEL(endpoint string, attrs ...attribute.KeyValue) (*sdktrace.TracerPro
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(prop)
 	return tp, prop, nil
+}
+
+func otlpHTTPExporterURL(endpoint string) string {
+	s := strings.TrimSpace(endpoint)
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return s
+	}
+	u, err := url.Parse("//" + s)
+	if err != nil || u.Hostname() == "" {
+		return "http://" + s
+	}
+	if p := u.Port(); p != "" {
+		return "http://" + net.JoinHostPort(u.Hostname(), p)
+	}
+	return "http://" + net.JoinHostPort(u.Hostname(), "4318")
+}
+
+func otlpGRPCExporterEndpoint(endpoint string) string {
+	s := strings.TrimSpace(endpoint)
+	u, err := url.Parse("//" + s)
+	if err != nil || u.Hostname() == "" {
+		return s
+	}
+	if p := u.Port(); p != "" {
+		return net.JoinHostPort(u.Hostname(), p)
+	}
+	return net.JoinHostPort(u.Hostname(), "4317")
+}
+
+func useHTTPEndpoint(endpoint string) bool {
+	s := strings.TrimSpace(endpoint)
+	if s == "" {
+		return false
+	}
+	if u, err := url.Parse(s); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		return true
+	}
+	if u, err := url.Parse("//" + s); err == nil {
+		if u.Port() == "" {
+			return true
+		}
+		if p, _ := strconv.Atoi(u.Port()); p == 4318 {
+			return true
+		}
+	}
+	return false
 }
 
 func getTraceIDFromContext(ctx context.Context) string {

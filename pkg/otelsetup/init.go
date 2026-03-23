@@ -1,11 +1,19 @@
 // Package otelsetup provides a shared way to create an OTLP TracerProvider and
 // set the global TracerProvider and TextMapPropagator, following the same
 // pattern as the instrumentation-go example packages. The application is
-// responsible for initialization (per OTel Go Contrib instrumentation guidelines).
+// responsible for initialization (per OTel contrib instrumentation guidelines).
+//
+// OTLP exporter options (see otlptracehttp):
+//   - WithEndpoint("host:port"): host and port only; scheme/path come from defaults or env merge.
+//   - WithEndpointURL("https://host:port/path"): full URL; sets host, path, and TLS vs insecure.
+//
+// This package uses WithEndpointURL for OTLP/HTTP so a single option overrides any malformed
+// URLPath from OTEL_EXPORTER_OTLP_* env (e.g. bare hostname parsed as path). gRPC uses WithEndpoint(host:port).
 package otelsetup
 
 import (
 	"context"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -31,19 +39,25 @@ func Init(endpoint string, attrs ...attribute.KeyValue) (*sdktrace.TracerProvide
 	if endpoint == "" {
 		endpoint = "localhost:4317"
 	}
+	endpoint = strings.TrimSpace(endpoint)
 	useHTTP := useHTTPEndpoint(endpoint)
+
+	// otlptracehttp applies env (OTEL_EXPORTER_OTLP_*) first, then user options.
+	// WithEndpoint(host:port) only sets Host; a bad env like "otel-collector" can leave URLPath
+	// as "otel-collector/v1/traces". WithEndpointURL sets both Host and Path from one URL, so
+	// we use it for HTTP and always pass a full http(s)://host:port (see otlpHTTPExporterURL).
 	ctx := context.Background()
 
 	var exp sdktrace.SpanExporter
 	var err error
 	if useHTTP {
 		exp, err = otlptracehttp.New(ctx,
-			otlptracehttp.WithEndpoint(endpoint),
+			otlptracehttp.WithEndpointURL(otlpHTTPExporterURL(endpoint)),
 			otlptracehttp.WithInsecure(),
 		)
 	} else {
 		exp, err = otlptracegrpc.New(ctx,
-			otlptracegrpc.WithEndpoint(endpoint),
+			otlptracegrpc.WithEndpoint(otlpGRPCExporterEndpoint(endpoint)),
 			otlptracegrpc.WithInsecure(),
 		)
 	}
@@ -78,6 +92,36 @@ func Shutdown(tp *sdktrace.TracerProvider) {
 	_ = tp.Shutdown(ctx)
 }
 
+// otlpHTTPExporterURL builds a full OTLP/HTTP base URL for WithEndpointURL (scheme + host + port).
+func otlpHTTPExporterURL(endpoint string) string {
+	s := strings.TrimSpace(endpoint)
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return s
+	}
+	u, err := url.Parse("//" + s)
+	if err != nil || u.Hostname() == "" {
+		return "http://" + s
+	}
+	if p := u.Port(); p != "" {
+		return "http://" + net.JoinHostPort(u.Hostname(), p)
+	}
+	return "http://" + net.JoinHostPort(u.Hostname(), "4318")
+}
+
+// otlpGRPCExporterEndpoint returns host:port for otlptracegrpc.WithEndpoint.
+func otlpGRPCExporterEndpoint(endpoint string) string {
+	s := strings.TrimSpace(endpoint)
+	u, err := url.Parse("//" + s)
+	if err != nil || u.Hostname() == "" {
+		return s
+	}
+	if p := u.Port(); p != "" {
+		return net.JoinHostPort(u.Hostname(), p)
+	}
+	return net.JoinHostPort(u.Hostname(), "4317")
+}
+
+// useHTTPEndpoint chooses OTLP/HTTP vs gRPC. Env without scheme and without port defaults to HTTP.
 func useHTTPEndpoint(endpoint string) bool {
 	s := strings.TrimSpace(endpoint)
 	if s == "" {
@@ -86,15 +130,13 @@ func useHTTPEndpoint(endpoint string) bool {
 	if u, err := url.Parse(s); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		return true
 	}
-	_, port, _ := splitHostPort(s)
-	p, _ := strconv.Atoi(port)
-	return p == 4318
-}
-
-func splitHostPort(hostport string) (host, port string, err error) {
-	u, err := url.Parse("//" + hostport)
-	if err != nil {
-		return "", "", err
+	if u, err := url.Parse("//" + s); err == nil {
+		if u.Port() == "" {
+			return true
+		}
+		if p, _ := strconv.Atoi(u.Port()); p == 4318 {
+			return true
+		}
 	}
-	return u.Hostname(), u.Port(), nil
+	return false
 }
