@@ -74,9 +74,34 @@ npm run dev      # Vite dev server
 npm run build    # Production build
 ```
 
+### Instrumentation packages (`pkg/instrumentation-js/`)
+Git submodule at `https://github.com/Marz32onE/instrumentation-js`. Contains `packages/otel-websocket` — TypeScript port of the Go `otel-websocket` package.
+
+```bash
+cd pkg/instrumentation-js
+make install       # Install dependencies (all packages)
+make build         # Build all packages (required before frontend can use it)
+make test          # Run all tests (Jest)
+make lint          # TypeScript type-check
+make publish-dry   # Dry-run npm pack to verify publish contents
+make clean         # Remove build artefacts
+```
+
+**MANDATORY: After ANY code change to `pkg/instrumentation-js/`, rebuild before testing in frontend:**
+```bash
+cd pkg/instrumentation-js && make build
+# Then rebuild frontend:
+cd frontend && npm install && npm run build
+```
+
+Frontend references this package via a local `file:` path (no npm publish needed for local dev):
+```json
+"@marz32one/otel-websocket": "file:../pkg/instrumentation-js/packages/otel-websocket"
+```
+
 ### Submodule setup
 ```bash
-git submodule update --init   # First-time or after pulling
+git submodule update --init   # First-time or after pulling (initialises both instrumentation-go and instrumentation-js)
 ```
 
 ## Architecture
@@ -132,7 +157,9 @@ MongoDB:
                         └─ Frontend: receive message (CONSUMER)
 ```
 
-### Instrumentation packages (`pkg/instrumentation-go/`)
+### Instrumentation packages
+
+#### Go (`pkg/instrumentation-go/`)
 Git submodule at `https://github.com/Marz32onE/instrumentation-go` (branch `feat/trace-propagation-mod`):
 - `otel-nats/otelnats` + `oteljetstream` — NATS client instrumentation
 - `otel-mongo/otelmongo` — MongoDB client instrumentation (injects `_oteltrace` field)
@@ -141,6 +168,15 @@ Git submodule at `https://github.com/Marz32onE/instrumentation-go` (branch `feat
 **Key pattern**: Packages do NOT initialize a TracerProvider. They accept one via options or fall back to `otel.GetTracerProvider()`. Each service calls `otelsetup.Init()` at startup to configure the global provider, then `defer otelsetup.Shutdown(tp)`.
 
 Each package has an `example/` directory showing the full init pattern.
+
+#### JavaScript (`pkg/instrumentation-js/`)
+Git submodule at `https://github.com/Marz32onE/instrumentation-js`:
+- `packages/otel-websocket` — TypeScript port of `otel-websocket`; wire-format compatible with the Go version
+
+**Key pattern**: Uses `@opentelemetry/api` globals (no provider init inside the library). The browser entry point is `@marz32one/otel-websocket/browser`, which exports `parseIncomingMessage` and `extractMessageContext` — browser-safe utilities that handle all three incoming formats:
+- `envelope`: Go-compatible `{ "headers": { "traceparent": "..." }, "payload": "<base64>" }`
+- `legacy`: Worker's original `{ traceparent, tracestate, body, api }`
+- `plain`: Raw text (no trace context)
 
 ### Shared OTel init (`pkg/otelsetup/`)
 `otelsetup.Init(endpoint, attrs...)` creates an OTLP TracerProvider (auto-detects gRPC vs HTTP from endpoint), sets it as the global provider, and sets the W3C propagator. Returns a shutdown function.

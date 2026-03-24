@@ -1,8 +1,10 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
-COPY package*.json ./
+COPY frontend/package*.json ./frontend/
+COPY pkg/instrumentation-js ./pkg/instrumentation-js/
+WORKDIR /app/frontend
 RUN npm install
-COPY . .
+COPY frontend/ ./
 ARG VITE_API_URL=http://localhost:8088
 ARG VITE_API_V1_URL=http://localhost:8089
 ARG VITE_WS_URL=ws://localhost:8082
@@ -14,6 +16,6 @@ ENV VITE_OTEL_COLLECTOR_URL=$VITE_OTEL_COLLECTOR_URL
 RUN npm run build
 
 FROM nginx:alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/frontend/dist /usr/share/nginx/html
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 3000

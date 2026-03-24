@@ -147,7 +147,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: .
+      dockerfile: frontend/Dockerfile
       args:
         - VITE_API_URL=http://localhost:8088
         - VITE_API_V1_URL=http://localhost:8089
