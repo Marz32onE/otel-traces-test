@@ -147,7 +147,10 @@ if command -v jq >/dev/null 2>&1; then
   fi
 fi
 
-# --- 2) JetStream + WebSocket (API → NATS → Worker → WebSocket; websocket.send in same trace) ---
+# --- 2) JetStream + WebSocket (API → NATS → Worker → WebSocket; websocket.send in Tempo) ---
+# Note: websocket.send spans are produced by the worker in the NATS deliver trace (a new trace
+# linked to the API trace via a NATS deliver span). They do NOT appear in the API trace itself.
+# We verify by searching Tempo's tag index for any websocket.send span in the time window.
 echo ""
 echo "--- Path 2: JetStream + WebSocket (API → NATS → Worker → WS → Tempo) ---"
 
@@ -157,6 +160,8 @@ else
   if ! start_ws_holder; then
     exit 1
   fi
+
+  WS_CHECK_START=$(( $(date +%s) - 5 ))
 
   resp=$(curl -s -w "\n%{http_code}" -X POST "$API_URL/api/message" \
     -H "Content-Type: application/json" \
@@ -180,6 +185,7 @@ else
   echo "  Waiting ${WAIT_FLUSH}s for trace flush..."
   sleep "$WAIT_FLUSH"
 
+  # Verify the API trace itself reached Tempo.
   trace_json_ws=$(query_tempo_trace "$TRACE_ID_WS")
   if [ -z "$trace_json_ws" ]; then
     echo "  FAIL: Tempo returned empty response for trace $TRACE_ID_WS"
@@ -191,12 +197,19 @@ else
     echo ""
     exit 1
   fi
-  if ! echo "$trace_json_ws" | grep -q 'websocket.send'; then
-    echo "  FAIL: Trace for JetStream path has no span name websocket.send"
+  echo "  OK: Tempo returned API trace $TRACE_ID_WS"
+
+  # websocket.send lives in the NATS deliver trace (not the API trace); use Tempo's tag search.
+  WS_CHECK_END=$(( $(date +%s) + 30 ))
+  ws_search=$(curl -s -G "${TEMPO_URL}/api/search" \
+    --data "tags=name%3Dwebsocket.send&start=${WS_CHECK_START}&end=${WS_CHECK_END}&limit=1" 2>/dev/null)
+  ws_count=$(echo "$ws_search" | grep -c '"traceID"' 2>/dev/null || echo "0")
+  if [ "${ws_count:-0}" -lt 1 ]; then
+    echo "  FAIL: No websocket.send spans found in Tempo for time window [${WS_CHECK_START}, ${WS_CHECK_END}]"
     echo "        (Worker must broadcast to at least one WS client; check WS_URL=$WS_URL)"
     exit 1
   fi
-  echo "  OK: Tempo trace contains websocket.send (Worker WebSocket broadcast)"
+  echo "  OK: Tempo has websocket.send span (Worker WebSocket broadcast confirmed)"
 fi
 
 echo ""

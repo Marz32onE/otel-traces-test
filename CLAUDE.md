@@ -41,6 +41,14 @@ golangci-lint run ./api/... ./worker/... ./dbwatcher/... ./pkg/...
 cd api && golangci-lint run ./...
 ```
 
+**MANDATORY: After ANY `.go` file change in `api/`, `worker/`, or `dbwatcher/`, run before marking work complete:**
+```bash
+# In the changed module directory:
+go build -o /dev/null .
+go test ./...
+golangci-lint run ./...
+```
+
 ### Instrumentation packages (`pkg/instrumentation-go/`)
 Git submodule with independent Go modules (`otel-mongo/`, `otel-mongo/v2/`, `otel-nats/`, `otel-gorilla-ws/`).
 Each module has its own `go.mod` — lint and test must run **inside each module directory**.
@@ -202,9 +210,36 @@ Each service has its own `go.mod` using **Go 1.26** and **OpenTelemetry v1.42.0*
 - Grafana datasource: `grafana/provisioning/datasources/tempo.yml`
 - golangci-lint: `.golangci.yml` (v2 syntax, linters: errcheck, govet, ineffassign, staticcheck, unused)
 
+## Docker Image Constraints
+
+| Image | Pin | Reason |
+|-------|-----|--------|
+| `grafana/tempo` | `2.9.0` (NOT `latest`/`2.10+`) | v2.10+ requires partition ring + memcached; simple local-storage config incompatible |
+| `nats` | `nats:alpine` (NOT `nats:latest`) | `nats:latest` lacks `wget`; healthcheck in docker-compose.yml depends on it |
+
+## E2E Trace Verification
+
+```bash
+TRACE_ID="deadbeef000000000000000000000001"
+SPAN_ID="1234567890abcdef"
+curl -s http://localhost:8088/api/message -X POST \
+  -H "Content-Type: application/json" \
+  -H "traceparent: 00-${TRACE_ID}-${SPAN_ID}-01" \
+  -d '{"text":"verify-test"}'
+# Expect: {"status":"published"}
+
+sleep 5
+curl -s "http://localhost:3200/api/traces/${TRACE_ID}" | head -c 500
+# Expect: JSON with api spans including producer span and POST /api/message
+```
+
+Run this after changes to `api/main.go`, `frontend/src/tracing.ts`, `otel-collector-config.yaml`, `tempo.yaml`, or `docker-compose.yml`.
+
 ## Troubleshooting
 
 - **Traces missing after Collector restart**: `docker compose restart otel-collector api worker dbwatcher`
 - **Worker spans missing in Tempo / export errors like `otel-collector/otel-collector/v1/traces`**: The OTLP HTTP exporter applies env first, then options. `WithEndpoint(host:port)` only sets the host; a bad `OTEL_EXPORTER_OTLP_ENDPOINT` like `otel-collector` can leave `URLPath` wrong. Use **`WithEndpointURL`** with a full `http://host:port` (as `otelsetup` does via `otlpHTTPExporterURL`) so Host and Path are consistent. In Docker, bare `otel-collector` defaults to OTLP/HTTP **4318**; use `otel-collector:4317` for gRPC.
 - **Frontend changes not applied**: `docker compose build --no-cache frontend && docker compose up -d frontend`
 - **Tempo returns 404 for trace**: Wait a few seconds after sending, then query again
+- **Browser spans missing / `rootServiceName: <root span not yet received>`**: Check if the frontend OTLP export is reaching the Collector. The official `@opentelemetry/exporter-trace-otlp-http` may silently fail in browser (uses `sendBeacon`/`XMLHttpRequest`); the project uses a custom `fetch(keepalive:true)` exporter in `frontend/src/tracing.ts` instead. Verify with: `curl -s "http://localhost:3200/api/search?q={}&limit=5"` — look for `rootServiceName: frontend`.
+- **Duplicate messages displayed**: Each API endpoint + NATS subject combination must ensure the message is only broadcast once. Check that `api` and `worker` subject names are consistent and no double-consume path exists.

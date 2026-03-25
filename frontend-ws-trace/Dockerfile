@@ -4,6 +4,11 @@ WORKDIR /app
 COPY frontend-ws-trace/package*.json ./frontend-ws-trace/
 COPY pkg/instrumentation-js ./pkg/instrumentation-js/
 
+# Build otel-rxjs-ws so dist/ exists before frontend-ws-trace npm install links it.
+WORKDIR /app/pkg/instrumentation-js/packages/otel-rxjs-ws
+RUN npm install --ignore-scripts
+RUN npm run build
+
 WORKDIR /app/frontend-ws-trace
 RUN npm install
 
