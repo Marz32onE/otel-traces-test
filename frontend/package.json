@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@marz32one/otel-websocket": "file:../pkg/instrumentation-js/packages/otel-websocket",
+    "@marz32one/otelwebsocket": "file:../pkg/instrumentation-js/packages/otelwebsocket",
     "@grafana/faro-react": "^2.2.4",
     "@grafana/faro-transport-otlp-http": "^2.2.4",
     "@grafana/faro-web-tracing": "^2.2.4",
@@ -19,7 +19,8 @@
     "@opentelemetry/sdk-trace-base": "^2.0.0",
     "@opentelemetry/sdk-trace-web": "^2.0.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "rxjs": "^7.8.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

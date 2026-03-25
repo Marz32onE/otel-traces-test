@@ -75,7 +75,7 @@ npm run build    # Production build
 ```
 
 ### Instrumentation packages (`pkg/instrumentation-js/`)
-Git submodule at `https://github.com/Marz32onE/instrumentation-js`. Contains `packages/otel-websocket` — TypeScript port of the Go `otel-websocket` package.
+Git submodule at `https://github.com/Marz32onE/instrumentation-js`. Contains `packages/otelwebsocket` — RxJS `webSocket`-aligned port; wire formats match Go `otel-websocket` (embedded send; embedded + header envelope receive).
 
 ```bash
 cd pkg/instrumentation-js
@@ -96,8 +96,10 @@ cd frontend && npm install && npm run build
 
 Frontend references this package via a local `file:` path (no npm publish needed for local dev):
 ```json
-"@marz32one/otel-websocket": "file:../pkg/instrumentation-js/packages/otel-websocket"
+"@marz32one/otelwebsocket": "file:../pkg/instrumentation-js/packages/otelwebsocket"
 ```
+
+The published layout matches npm conventions: **`type: "module"`**, **`exports`** (with `types` + `import`), and Vite resolves **`dist/index.js`** after `make build` — no special Vite alias required.
 
 ### Submodule setup
 ```bash
@@ -171,12 +173,7 @@ Each package has an `example/` directory showing the full init pattern.
 
 #### JavaScript (`pkg/instrumentation-js/`)
 Git submodule at `https://github.com/Marz32onE/instrumentation-js`:
-- `packages/otel-websocket` — TypeScript port of `otel-websocket`; wire-format compatible with the Go version
-
-**Key pattern**: Uses `@opentelemetry/api` globals (no provider init inside the library). The browser entry point is `@marz32one/otel-websocket/browser`, which exports `parseIncomingMessage` and `extractMessageContext` — browser-safe utilities that handle all three incoming formats:
-- `envelope`: Go-compatible `{ "headers": { "traceparent": "..." }, "payload": "<base64>" }`
-- `legacy`: Worker's original `{ traceparent, tracestate, body, api }`
-- `plain`: Raw text (no trace context)
+- `packages/otelwebsocket` — **Same public API as `rxjs/webSocket`** (`webSocket`, `WebSocketSubject`, `WebSocketSubjectConfig` only). Trace propagation uses global `propagation` / `trace.getTracerProvider()`. Wire formats match Go `otel-websocket`: **embedded** `{ "traceparent"?, "tracestate"?, "data": … }` on send; on receive also **header-style** `{ "headers", "payload" }` for compat, plus plain JSON/text with no trace fields.
 
 ### Shared OTel init (`pkg/otelsetup/`)
 `otelsetup.Init(endpoint, attrs...)` creates an OTLP TracerProvider (auto-detects gRPC vs HTTP from endpoint), sets it as the global provider, and sets the W3C propagator. Returns a shutdown function.
