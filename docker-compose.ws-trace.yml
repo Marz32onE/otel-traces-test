@@ -8,6 +8,20 @@ services:
     ports:
       - "3200:3200"
 
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data_ws_trace:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - tempo
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
     command: ["--config=/etc/otelcol/config.yaml"]
@@ -49,4 +63,5 @@ services:
 
 volumes:
   tempo_data:
+  grafana_data_ws_trace:
 
