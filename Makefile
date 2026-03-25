@@ -26,7 +26,7 @@ KIND_CLUSTER ?= $(shell \
 HELM_RELEASE ?= otel-traces-test
 HELM_NAMESPACE ?= otel
 
-.PHONY: up down clean restart build logs ps help detect verify-trace up-verify
+.PHONY: up down clean restart build logs ps help detect verify-trace up-verify up-ws-trace down-ws-trace logs-ws-trace verify-ws-trace
 .PHONY: kind-build kind-install kind-uninstall kind-verify kind-up kind-down
 
 # Show all auto-detected variables
@@ -85,6 +85,10 @@ help:
 	@echo "  make logs         - Follow logs (optional: make logs SVC=api)"
 	@echo "  make verify-trace  - Check trace propagation (API→Tempo); run after 'make up'"
 	@echo "  make up-verify    - make up, wait, then verify-trace"
+	@echo "  make up-ws-trace   - Start minimal WS trace stack ($(COMPOSE_CMD) -f docker-compose.ws-trace.yml up -d --build)"
+	@echo "  make down-ws-trace - Stop minimal WS trace stack"
+	@echo "  make logs-ws-trace - Follow logs (optional: make logs-ws-trace SVC=ws-node-backend)"
+	@echo "  make verify-ws-trace - Verify websocket trace propagation (Tempo)"
 	@echo "  make detect       - Show auto-detected COMPOSE_CMD, DOCKER_CMD, KIND_CLUSTER"
 	@echo "  make help         - This message"
 	@echo ""
@@ -111,6 +115,21 @@ kind-build:
 	@$(DOCKER_CMD) save -o /tmp/otel-traces-test-frontend.tar localhost/otel-traces-test-frontend:latest
 	kind load image-archive /tmp/otel-traces-test-api.tar /tmp/otel-traces-test-worker.tar /tmp/otel-traces-test-frontend.tar --name $(KIND_CLUSTER)
 	@rm -f /tmp/otel-traces-test-api.tar /tmp/otel-traces-test-worker.tar /tmp/otel-traces-test-frontend.tar
+
+# --- Minimal: frontend+Node WS trace ---
+WS_TRACE_COMPOSE_FILE ?= docker-compose.ws-trace.yml
+
+up-ws-trace:
+	$(COMPOSE_CMD) -f $(WS_TRACE_COMPOSE_FILE) up -d --build
+
+down-ws-trace:
+	$(COMPOSE_CMD) -f $(WS_TRACE_COMPOSE_FILE) down -v
+
+logs-ws-trace:
+	$(COMPOSE_CMD) -f $(WS_TRACE_COMPOSE_FILE) logs -f $(SVC)
+
+verify-ws-trace:
+	@bash scripts/verify-ws-trace.sh
 
 kind-install:
 	helm upgrade --install $(HELM_RELEASE) ./charts/otel-traces-test -n $(HELM_NAMESPACE) --create-namespace

@@ -1,0 +1,52 @@
+services:
+  tempo:
+    image: grafana/tempo:2.9.0
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./charts/otel-traces-test/config/tempo.yaml:/etc/tempo.yaml
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./charts/otel-traces-test/config/otel-collector.yaml:/etc/otelcol/config.yaml
+    ports:
+      - "4318:4318"
+      - "4317:4317"
+    depends_on:
+      - tempo
+
+  ws-node-backend:
+    build:
+      context: .
+      dockerfile: ws-node-backend/Dockerfile
+    environment:
+      - PORT=8085
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - SERVICE_VERSION=0.0.1
+    ports:
+      - "8085:8085"
+    depends_on:
+      - otel-collector
+    restart: unless-stopped
+
+  frontend-ws-trace:
+    build:
+      context: .
+      dockerfile: frontend-ws-trace/Dockerfile
+      args:
+        - VITE_WS_URL=ws://localhost:8085/ws
+        - VITE_OTEL_COLLECTOR_URL=http://localhost:4318
+    ports:
+      - "3100:3000"
+    depends_on:
+      - ws-node-backend
+      - otel-collector
+    restart: unless-stopped
+
+volumes:
+  tempo_data:
+
