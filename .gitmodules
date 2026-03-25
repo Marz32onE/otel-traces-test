@@ -1,7 +1,7 @@
 [submodule "pkg/instrumentation-go"]
 	path = pkg/instrumentation-go
 	url = https://github.com/Marz32onE/instrumentation-go.git
-	branch = feat/trace-propagation-mod
 [submodule "pkg/instrumentation-js"]
 	path = pkg/instrumentation-js
-	url = git@github.com:Marz32onE/instrumentation-js.git
+	url = https://github.com/Marz32onE/instrumentation-js.git
+s
