@@ -6,7 +6,7 @@ import {
   SpanKind,
 } from "@opentelemetry/api";
 import type { Subscription } from "rxjs";
-import { webSocket } from "@marz32one/otelwebsocket";
+import { webSocket } from "@marz32one/otel-rxjs-ws";
 import { tracer } from "../tracing";
 import { WS_URL } from "../constants/env";
 

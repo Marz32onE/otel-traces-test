@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@marz32one/otelwebsocket": "file:../pkg/instrumentation-js/packages/otelwebsocket",
+    "@marz32one/otel-rxjs-ws": "file:../pkg/instrumentation-js/packages/otel-rxjs-ws",
     "@grafana/faro-react": "^2.2.4",
     "@grafana/faro-transport-otlp-http": "^2.2.4",
     "@grafana/faro-web-tracing": "^2.2.4",

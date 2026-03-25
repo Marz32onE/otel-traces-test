@@ -42,7 +42,7 @@ cd api && golangci-lint run ./...
 ```
 
 ### Instrumentation packages (`pkg/instrumentation-go/`)
-Git submodule with independent Go modules (`otel-mongo/`, `otel-mongo/v2/`, `otel-nats/`, `otel-websocket/`).
+Git submodule with independent Go modules (`otel-mongo/`, `otel-mongo/v2/`, `otel-nats/`, `otel-gorilla-ws/`).
 Each module has its own `go.mod` — lint and test must run **inside each module directory**.
 
 **MANDATORY: After ANY code change to `pkg/instrumentation-go/`, run these checks before considering the work complete:**
@@ -51,7 +51,7 @@ Each module has its own `go.mod` — lint and test must run **inside each module
 cd pkg/instrumentation-go/otel-mongo && golangci-lint run ./...
 cd pkg/instrumentation-go/otel-mongo/v2 && golangci-lint run ./...
 cd pkg/instrumentation-go/otel-nats && golangci-lint run ./...
-cd pkg/instrumentation-go/otel-websocket && golangci-lint run ./...
+cd pkg/instrumentation-go/otel-gorilla-ws && golangci-lint run ./...
 ```
 All modules must report **0 issues**. Common failures: `goimports` (stdlib imports must be in a separate group before third-party), `errcheck`, `govet`.
 
@@ -75,7 +75,7 @@ npm run build    # Production build
 ```
 
 ### Instrumentation packages (`pkg/instrumentation-js/`)
-Git submodule at `https://github.com/Marz32onE/instrumentation-js`. Contains `packages/otelwebsocket` — RxJS `webSocket`-aligned port; wire formats match Go `otel-websocket` (embedded send; embedded + header envelope receive).
+Git submodule at `https://github.com/Marz32onE/instrumentation-js`. Contains `packages/otel-rxjs-ws` (RxJS wrapper) and `packages/otel-ws` (native Node ws). Wire formats match Go `otel-gorilla-ws` (embedded send; embedded + header envelope receive).
 
 ```bash
 cd pkg/instrumentation-js
@@ -96,7 +96,7 @@ cd frontend && npm install && npm run build
 
 Frontend references this package via a local `file:` path (no npm publish needed for local dev):
 ```json
-"@marz32one/otelwebsocket": "file:../pkg/instrumentation-js/packages/otelwebsocket"
+"@marz32one/otel-rxjs-ws": "file:../pkg/instrumentation-js/packages/otel-rxjs-ws"
 ```
 
 The published layout matches npm conventions: **`type: "module"`**, **`exports`** (with `types` + `import`), and Vite resolves **`dist/index.js`** after `make build` — no special Vite alias required.
@@ -165,7 +165,7 @@ MongoDB:
 Git submodule at `https://github.com/Marz32onE/instrumentation-go` (branch `feat/trace-propagation-mod`):
 - `otel-nats/otelnats` + `oteljetstream` — NATS client instrumentation
 - `otel-mongo/otelmongo` — MongoDB client instrumentation (injects `_oteltrace` field)
-- `otel-websocket` — WebSocket trace propagation
+- `otel-gorilla-ws` — WebSocket trace propagation for gorilla/websocket
 
 **Key pattern**: Packages do NOT initialize a TracerProvider. They accept one via options or fall back to `otel.GetTracerProvider()`. Each service calls `otelsetup.Init()` at startup to configure the global provider, then `defer otelsetup.Shutdown(tp)`.
 
@@ -173,7 +173,8 @@ Each package has an `example/` directory showing the full init pattern.
 
 #### JavaScript (`pkg/instrumentation-js/`)
 Git submodule at `https://github.com/Marz32onE/instrumentation-js`:
-- `packages/otelwebsocket` — **Same public API as `rxjs/webSocket`** (`webSocket`, `WebSocketSubject`, `WebSocketSubjectConfig` only). Trace propagation uses global `propagation` / `trace.getTracerProvider()`. Wire formats match Go `otel-websocket`: **embedded** `{ "traceparent"?, "tracestate"?, "data": … }` on send; on receive also **header-style** `{ "headers", "payload" }` for compat, plus plain JSON/text with no trace fields.
+- `packages/otel-rxjs-ws` — **Same public API as `rxjs/webSocket`** (`webSocket`, `WebSocketSubject`, `WebSocketSubjectConfig` only). Trace propagation uses global `propagation` / `trace.getTracerProvider()`.
+- `packages/otel-ws` — Native Node `ws` wrapper with trace propagation and send/receive spans.
 
 ### Shared OTel init (`pkg/otelsetup/`)
 `otelsetup.Init(endpoint, attrs...)` creates an OTLP TracerProvider (auto-detects gRPC vs HTTP from endpoint), sets it as the global provider, and sets the W3C propagator. Returns a shutdown function.

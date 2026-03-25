@@ -13,7 +13,7 @@
 - **目的**：示範端到端 W3C Trace Context 傳播：瀏覽器 → API（HTTP + NATS 發布）→ Worker（NATS 訂閱 + WebSocket 廣播）→ 瀏覽器（WebSocket 接收並建立最後一段 span）。
 - **技術棧**：React 18 + TypeScript + Vite（前端，**Grafana Faro SDK** 負責 trace 與 W3C 傳播）、Go + Gin（API）、Go + net/http + otelhttp（Worker）、NATS（JetStream + Core）、OpenTelemetry（OTel）SDK、OTel Collector、Grafana Tempo、Grafana。
 - **四條路徑**：**JetStream**（`POST /api/message` → `messages.new` → Worker）、**Core NATS**（`POST /api/message-core` → `messages.core` → Worker）、**Worker HTTP**（`POST /api/message-via-worker` → API 以 **otelresty** 呼叫 Worker `POST /notify`，HTTP 傳播 trace）、**MongoDB**（`POST /api/message-mongo` → Mongo → **dbwatcher** 發 id 至 `messages.db` → Worker **FindOne** → WebSocket）。可在 Tempo 依 trace ID 查詢。
-- **Instrumentation**：`pkg/instrumentation-go`（Git submodule）— [instrumentation-go](https://github.com/Marz32onE/instrumentation-go)：**otel-nats**（otelnats + oteljetstream）、**otel-mongo**（otelmongo）、**otel-websocket**。各套件僅透過 option 接受 **TracerProvider** 與 **Propagators**，不提供 InitTracer；由應用程式在啟動時設定 global provider 與 propagator（見 **pkg/otelsetup** 與各套件 **example/**）。API 使用 [github.com/dubonzi/otelresty](https://github.com/dubonzi/otelresty) 作為 go-resty 的 OTel（span + trace 傳播）。
+- **Instrumentation**：`pkg/instrumentation-go`（Git submodule）— [instrumentation-go](https://github.com/Marz32onE/instrumentation-go)：**otel-nats**（otelnats + oteljetstream）、**otel-mongo**（otelmongo）、**otel-gorilla-ws**。各套件僅透過 option 接受 **TracerProvider** 與 **Propagators**，不提供 InitTracer；由應用程式在啟動時設定 global provider 與 propagator（見 **pkg/otelsetup** 與各套件 **example/**）。API 使用 [github.com/dubonzi/otelresty](https://github.com/dubonzi/otelresty) 作為 go-resty 的 OTel（span + trace 傳播）。
 - **建置與執行**：Docker Compose 從專案根目錄 build；`api`、`worker`、`dbwatcher` 的 build context 為根目錄並複製 `pkg/instrumentation-go`。使用 `make up` 或 `docker compose up --build`（Makefile 預設為 `podman compose`，可覆寫 `COMPOSE_CMD='docker compose'`）。
 - **關鍵設定**：`api`、`worker`、`dbwatcher` 皆需 `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` 才會把 span 送到 Tempo；前端透過 `VITE_OTEL_COLLECTOR_URL` 以 OTLP/HTTP 送 trace，經 Collector（CORS 支援）轉發到 Tempo。
 
@@ -131,7 +131,7 @@ Frontend: send-message-mongo              (SpanKind CLIENT)
 ### 開發：測試與 Lint
 
 - Go 單元測試使用 **testify**，位於 `pkg/instrumentation-go`（otel-nats、otel-mongo）及 `api`/`worker`/`dbwatcher`。
-- 建議於各模組執行 **`go vet ./...`** 與 **`go test ./...`**（如 `api`、`worker`、`dbwatcher`、`pkg/otelsetup`、`pkg/instrumentation-go/otel-nats`、`pkg/instrumentation-go/otel-mongo`、`pkg/instrumentation-go/otel-websocket`）。
+- 建議於各模組執行 **`go vet ./...`** 與 **`go test ./...`**（如 `api`、`worker`、`dbwatcher`、`pkg/otelsetup`、`pkg/instrumentation-go/otel-nats`、`pkg/instrumentation-go/otel-mongo`、`pkg/instrumentation-go/otel-gorilla-ws`）。
 - 若已安裝 [golangci-lint](https://golangci-lint.run/)，可於專案根目錄執行 **`golangci-lint run ./...`** 進行靜態檢查（需在各 Go 模組目錄分別執行，或使用根目錄的 `go work` / 依序 `cd` 各模組）。
 
 ---
@@ -239,10 +239,10 @@ make clean   # 含 volumes
 ├── dbwatcher/              # Mongo change stream → NATS
 ├── frontend/               # React + Vite + Grafana Faro
 ├── pkg/
-│   ├── instrumentation-go/   # Git submodule — otel-nats、otel-mongo、otel-websocket
+│   ├── instrumentation-go/   # Git submodule — otel-nats、otel-mongo、otel-gorilla-ws
 │   │   ├── otel-nats/          # otelnats、oteljetstream（NATS + JetStream OTel）
 │   │   ├── otel-mongo/        # otelmongo（MongoDB OTel，_oteltrace）
-│   │   ├── otel-websocket/    # WebSocket trace 傳播
+│   │   ├── otel-gorilla-ws/   # WebSocket trace 傳播
 │   │   └── example/           # （各套件下）如何 init TracerProvider + 使用套件
 │   └── otelsetup/             # 共用 OTLP TracerProvider 初始化（Init、Shutdown）
 ├── charts/otel-traces-test/config/
@@ -256,7 +256,7 @@ make clean   # 含 volumes
 
 ### Tracing：Provider / Propagator 初始化（符合 OTel Go Contrib）
 
-Instrumentation 套件（**otelnats**、**oteljetstream**、**otelmongo**、**otelwebsocket**）**不提供** `InitTracer`，僅透過 option 接受 **TracerProvider** 與 **Propagators**，未設定時使用 `otel.GetTracerProvider()` / `otel.GetTextMapPropagator()`。
+Instrumentation 套件（**otelnats**、**oteljetstream**、**otelmongo**、**otelgorillaws**）**不提供** `InitTracer`，僅透過 option 接受 **TracerProvider** 與 **Propagators**，未設定時使用 `otel.GetTracerProvider()` / `otel.GetTextMapPropagator()`。
 
 - **本專案**：`api`、`worker`、`dbwatcher` 使用 **pkg/otelsetup**：在啟動時呼叫 **`otelsetup.Init("", attribute.String("service.name", "api"), ...)`** 一次，接著 **`defer otelsetup.Shutdown(tp)`**。之後直接使用 `otelnats.Connect`、`otelmongo.NewClient` 等，無需各套件單獨 init。
 - **範例**：`pkg/instrumentation-go` 下各套件皆有 **example/** 目錄，示範如何建立 OTLP TracerProvider、設定 `otel.SetTracerProvider` 與 `otel.SetTextMapPropagator`，再使用該套件。
@@ -267,7 +267,7 @@ Instrumentation 套件（**otelnats**、**oteljetstream**、**otelmongo**、**ot
 
 | 路徑                      | 說明 |
 |---------------------------|------|
-| `pkg/instrumentation-go` | [instrumentation-go](https://github.com/Marz32onE/instrumentation-go) — otel-nats（otelnats + oteljetstream）、otel-mongo（otelmongo）、otel-websocket。分支：`feat/trace-propagation-mod`。 |
+| `pkg/instrumentation-go` | [instrumentation-go](https://github.com/Marz32onE/instrumentation-go) — otel-nats（otelnats + oteljetstream）、otel-mongo（otelmongo）、otel-gorilla-ws。分支：`feat/trace-propagation-mod`。 |
 
 **依賴（非 submodule）**：[dubonzi/otelresty](https://github.com/dubonzi/otelresty) — go-resty 的 OTel；API 用以外呼 Worker（spans + trace 傳播）。
 

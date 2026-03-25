@@ -13,7 +13,7 @@ A full-stack example demonstrating **OpenTelemetry distributed tracing**. Users 
 - **Goal:** End-to-end W3C Trace Context propagation: browser → API (HTTP + NATS publish) → Worker (NATS subscribe + WebSocket broadcast) → browser (WebSocket receive and final span).
 - **Stack:** React 18 + TypeScript + Vite (frontend; **Grafana Faro SDK** for trace and W3C propagation), Go + Gin (API), Go + net/http + otelhttp (Worker), NATS (JetStream + Core), OpenTelemetry SDK, OTel Collector, Grafana Tempo, Grafana.
 - **Four paths:** **JetStream** (`POST /api/message` → `messages.new` → Worker), **Core NATS** (`POST /api/message-core` → `messages.core` → Worker), **Worker HTTP** (`POST /api/message-via-worker` → API calls Worker `POST /notify` via **otelresty** → trace propagates over HTTP), **MongoDB** (`POST /api/message-mongo` → Mongo → **dbwatcher** (id on `messages.db`) → Worker **FindOne** → WebSocket). Query by trace ID in Tempo.
-- **Instrumentation:** `pkg/instrumentation-go` (Git submodule) — [instrumentation-go](https://github.com/Marz32onE/instrumentation-go): **otel-nats** (otelnats + oteljetstream), **otel-mongo** (otelmongo), **otel-websocket**. Packages accept **TracerProvider** and **Propagators** via options; they do **not** provide InitTracer. The app initializes the global provider and propagator at startup (see **pkg/otelsetup** and each package’s **example/**). API uses [github.com/dubonzi/otelresty](https://github.com/dubonzi/otelresty) for go-resty (spans + trace propagation).
+- **Instrumentation:** `pkg/instrumentation-go` (Git submodule) — [instrumentation-go](https://github.com/Marz32onE/instrumentation-go): **otel-nats** (otelnats + oteljetstream), **otel-mongo** (otelmongo), **otel-gorilla-ws**. Packages accept **TracerProvider** and **Propagators** via options; they do **not** provide InitTracer. The app initializes the global provider and propagator at startup (see **pkg/otelsetup** and each package’s **example/**). API uses [github.com/dubonzi/otelresty](https://github.com/dubonzi/otelresty) for go-resty (spans + trace propagation).
 - **Build & run:** Docker Compose builds from repo root; `api`, `worker`, and `dbwatcher` use root as build context and copy `pkg/instrumentation-go`. Use `make up` or `docker compose up --build` (Makefile defaults to `podman compose`; override with `COMPOSE_CMD='docker compose'`).
 - **Config:** `api`, `worker`, and `dbwatcher` need `OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317` to send spans to Tempo; frontend uses `VITE_OTEL_COLLECTOR_URL` for OTLP/HTTP via Collector (CORS) to Tempo.
 
@@ -128,7 +128,7 @@ Frontend: send-message-mongo              (CLIENT)
 ### Development: tests and lint
 
 - Go tests use **testify** in `pkg/instrumentation-go` (otel-nats, otel-mongo) and in `api`/`worker`/`dbwatcher` where applicable.
-- Run **`go vet ./...`** and **`go test ./...`** in each module (`api`, `worker`, `dbwatcher`, `pkg/otelsetup`, `pkg/instrumentation-go/otel-nats`, `pkg/instrumentation-go/otel-mongo`, `pkg/instrumentation-go/otel-websocket`).
+- Run **`go vet ./...`** and **`go test ./...`** in each module (`api`, `worker`, `dbwatcher`, `pkg/otelsetup`, `pkg/instrumentation-go/otel-nats`, `pkg/instrumentation-go/otel-mongo`, `pkg/instrumentation-go/otel-gorilla-ws`).
 - With [golangci-lint](https://golangci-lint.run/) installed, run it per Go module directory.
 
 ---
@@ -225,10 +225,10 @@ make clean   # with volumes
 ├── dbwatcher/              # Mongo change stream → NATS
 ├── frontend/               # React + Vite + Grafana Faro
 ├── pkg/
-│   ├── instrumentation-go/   # Git submodule — otel-nats, otel-mongo, otel-websocket
+│   ├── instrumentation-go/   # Git submodule — otel-nats, otel-mongo, otel-gorilla-ws
 │   │   ├── otel-nats/          # otelnats, oteljetstream (NATS + JetStream OTel)
 │   │   ├── otel-mongo/        # otelmongo (MongoDB OTel, _oteltrace)
-│   │   ├── otel-websocket/    # WebSocket trace propagation
+│   │   ├── otel-gorilla-ws/   # WebSocket trace propagation
 │   │   └── example/           # (per package) how to init TracerProvider + use package
 │   └── otelsetup/             # Shared OTLP TracerProvider init (Init, Shutdown)
 ├── charts/otel-traces-test/config/
@@ -242,7 +242,7 @@ make clean   # with volumes
 
 ### Tracing: provider/propagator init (per OTel Go Contrib)
 
-Instrumentation packages (**otelnats**, **oteljetstream**, **otelmongo**, **otelwebsocket**) do **not** provide `InitTracer`. They accept **TracerProvider** and **Propagators** via options and default to `otel.GetTracerProvider()` / `otel.GetTextMapPropagator()`.
+Instrumentation packages (**otelnats**, **oteljetstream**, **otelmongo**, **otelgorillaws**) do **not** provide `InitTracer`. They accept **TracerProvider** and **Propagators** via options and default to `otel.GetTracerProvider()` / `otel.GetTextMapPropagator()`.
 
 - **This repo:** `api`, `worker`, and `dbwatcher` use **pkg/otelsetup**: call **`otelsetup.Init("", attribute.String("service.name", "api"), ...)`** once at startup, then **`defer otelsetup.Shutdown(tp)`**. After that, use `otelnats.Connect`, `otelmongo.NewClient`, etc. with no per-package init.
 - **Examples:** Each package under `pkg/instrumentation-go` has an **example/** directory showing how to create an OTLP TracerProvider, set `otel.SetTracerProvider` and `otel.SetTextMapPropagator`, then use the package.
@@ -253,7 +253,7 @@ Instrumentation packages (**otelnats**, **oteljetstream**, **otelmongo**, **otel
 
 | Path                      | Description |
 |---------------------------|-------------|
-| `pkg/instrumentation-go`  | [instrumentation-go](https://github.com/Marz32onE/instrumentation-go) — otel-nats (otelnats + oteljetstream), otel-mongo (otelmongo), otel-websocket. Branch: `feat/trace-propagation-mod`. |
+| `pkg/instrumentation-go`  | [instrumentation-go](https://github.com/Marz32onE/instrumentation-go) — otel-nats (otelnats + oteljetstream), otel-mongo (otelmongo), otel-gorilla-ws. Branch: `feat/trace-propagation-mod`. |
 
 **Dependencies (not submodules):** [dubonzi/otelresty](https://github.com/dubonzi/otelresty) — OTel for go-resty; API uses it for HTTP client spans + propagation to Worker.
 

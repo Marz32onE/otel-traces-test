@@ -12,7 +12,7 @@ import (
 	otelmongo "github.com/Marz32onE/instrumentation-go/otel-mongo/v2"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
-	"github.com/Marz32onE/instrumentation-go/otel-websocket"
+	otelgorillaws "github.com/Marz32onE/instrumentation-go/otel-gorilla-ws"
 	"github.com/Marz32onE/otel-traces-test/pkg/otelsetup"
 	"github.com/gorilla/websocket"
 	nats "github.com/nats-io/nats.go"
@@ -28,11 +28,11 @@ var (
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
-	clients   = make(map[*otelwebsocket.Conn]bool)
+	clients   = make(map[*otelgorillaws.Conn]bool)
 	clientsMu sync.Mutex
 )
 
-// wsPayload is the application payload inside the otelwebsocket envelope so the frontend can show body and which consumer delivered the message.
+// wsPayload is the application payload inside the otel-gorilla-ws envelope so the frontend can show body and which consumer delivered the message.
 type wsPayload struct {
 	Body string `json:"body"`
 	Api  string `json:"api,omitempty"` // consumer type postfix for verification, e.g. "Consume", "Messages"
@@ -62,7 +62,7 @@ func wsHandler(tp *sdktrace.TracerProvider, prop propagation.TextMapPropagator) 
 			log.Printf("Upgrade error: %v", err)
 			return
 		}
-		conn := otelwebsocket.NewConn(raw, otelwebsocket.WithTracerProvider(tp), otelwebsocket.WithPropagators(prop))
+		conn := otelgorillaws.NewConn(raw, otelgorillaws.WithTracerProvider(tp), otelgorillaws.WithPropagators(prop))
 		defer func() {
 			clientsMu.Lock()
 			delete(clients, conn)

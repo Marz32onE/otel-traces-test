@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/Marz32onE/instrumentation-go/otel-mongo/v2 v2.0.0
 	github.com/Marz32onE/instrumentation-go/otel-nats v0.0.0
-	github.com/Marz32onE/instrumentation-go/otel-websocket v0.0.0
+	github.com/Marz32onE/instrumentation-go/otel-gorilla-ws v0.0.0
 	github.com/Marz32onE/otel-traces-test/pkg/otelsetup v0.0.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.49.0
@@ -18,7 +18,7 @@ require (
 replace (
 	github.com/Marz32onE/instrumentation-go/otel-mongo/v2 => ../pkg/instrumentation-go/otel-mongo/v2
 	github.com/Marz32onE/instrumentation-go/otel-nats => ../pkg/instrumentation-go/otel-nats
-	github.com/Marz32onE/instrumentation-go/otel-websocket => ../pkg/instrumentation-go/otel-websocket
+	github.com/Marz32onE/instrumentation-go/otel-gorilla-ws => ../pkg/instrumentation-go/otel-gorilla-ws
 	github.com/Marz32onE/otel-traces-test/pkg/otelsetup => ../pkg/otelsetup
 )
 
