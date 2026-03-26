@@ -146,3 +146,4 @@ dbwatcher/dbwatcher
 # Frontend build
 frontend/dist/
 frontend/node_modules/
+pkg/.DS_Store

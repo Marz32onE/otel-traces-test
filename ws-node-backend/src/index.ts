@@ -1,5 +1,6 @@
 import http from 'http';
-import { WebSocketServer, type WebSocket as Ws } from 'ws';
+import WebSocket from 'ws';
+type Ws = WebSocket;
 import { trace, context as otelContext } from '@opentelemetry/api';
 
 import { instrumentSocket } from '@marz32one/otel-ws';
@@ -37,7 +38,7 @@ const server = http.createServer((req, res) => {
 async function main() {
   const { shutdown } = initOtel();
 
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  const wss = new WebSocket.Server({ server, path: '/ws' });
 
   wss.on('connection', (ws: Ws) => {
     // - send(): WsAck
