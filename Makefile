@@ -120,6 +120,13 @@ kind-build:
 WS_TRACE_COMPOSE_FILE ?= docker-compose.ws-trace.yml
 
 up-ws-trace:
+	@set -e; \
+	REPO_ROOT="$$PWD"; \
+	if [ -z "$$DOCKER_CONFIG" ]; then mkdir -p "$$REPO_ROOT/.docker-config"; export DOCKER_CONFIG="$$REPO_ROOT/.docker-config"; fi; \
+	cd "$$REPO_ROOT/pkg/instrumentation-js"; \
+	[ -d node_modules ] || npm install; \
+	npm run build --workspaces; \
+	cd "$$REPO_ROOT"; \
 	$(COMPOSE_CMD) -f $(WS_TRACE_COMPOSE_FILE) up -d --build
 
 down-ws-trace:
