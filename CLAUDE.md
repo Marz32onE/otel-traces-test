@@ -109,6 +109,18 @@ Frontend references this package via a local `file:` path (no npm publish needed
 
 The published layout matches npm conventions: **`type: "module"`**, **`exports`** (with `types` + `import`), and Vite resolves **`dist/index.js`** after `make build` — no special Vite alias required.
 
+### Minimal WebSocket trace stack
+A standalone demo using `ws-node-backend` (Node.js/TypeScript) + `frontend-ws-trace` + `docker-compose.ws-trace.yml`. Runs without Go services — uses `pkg/instrumentation-js/otel-ws` for trace propagation.
+
+```bash
+make up-ws-trace       # Build + start (tempo, grafana, otel-collector, ws-node-backend :8085, frontend-ws-trace :3000)
+make down-ws-trace     # Stop
+make logs-ws-trace     # Tail logs; SVC=ws-node-backend for a single service
+make verify-ws-trace   # Verify WebSocket trace propagation via Tempo
+```
+
+`ws-node-backend` env: `PORT=8085`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318`.
+
 ### Submodule setup
 ```bash
 git submodule update --init   # First-time or after pulling (initialises both instrumentation-go and instrumentation-js)
