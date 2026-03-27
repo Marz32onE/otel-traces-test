@@ -7,7 +7,6 @@ const OTEL_COLLECTOR_URL =
   import.meta.env.VITE_OTEL_COLLECTOR_URL ?? 'http://localhost:4318';
 
 initializeFaro({
-  url: OTEL_COLLECTOR_URL,
   app: {
     name: 'frontend-ws-trace',
     version: '0.0.1',

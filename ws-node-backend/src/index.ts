@@ -1,4 +1,5 @@
 import http from 'http';
+import net from 'net';
 import WebSocket from 'ws';
 type Ws = WebSocket;
 import { trace, context as otelContext } from '@opentelemetry/api';
@@ -38,9 +39,24 @@ const server = http.createServer((req, res) => {
 async function main() {
   const { shutdown } = initOtel();
 
-  const wss = new WebSocket.Server({ server, path: '/ws' });
+  // Use noServer + manual upgrade routing so both servers share one HTTP server
+  // without ws v5's path-option bug (first server rejects all non-matching upgrades).
+  const wssOtel = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
+  const wssPlain = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 
-  wss.on('connection', (ws: Ws) => {
+  server.on('upgrade', (req, socket, head) => {
+    const netSocket = socket as net.Socket;
+    const pathname = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`).pathname;
+    if (pathname === '/otel-ws') {
+      wssOtel.handleUpgrade(req, netSocket, head, (ws) => wssOtel.emit('connection', ws, req));
+    } else if (pathname === '/ws') {
+      wssPlain.handleUpgrade(req, netSocket, head, (ws) => wssPlain.emit('connection', ws, req));
+    } else {
+      netSocket.destroy();
+    }
+  });
+
+  wssOtel.on('connection', (ws: Ws) => {
     // - send(): WsAck
     // - onMessage handler input: WsPayload
     const sock = instrumentSocket<WsAck, WsPayload>(ws);
@@ -62,9 +78,17 @@ async function main() {
     });
   });
 
+  wssPlain.on('connection', (ws: Ws) => {
+    ws.on('message', (data) => {
+      ws.send(String(data));
+    });
+  });
+
   server.listen(port, () => {
     // eslint-disable-next-line no-console
-    console.log(`ws-node-backend listening on http://0.0.0.0:${port} (ws path /ws)`);
+    console.log(
+      `ws-node-backend listening on http://0.0.0.0:${port} (ws paths: /otel-ws, /ws)`,
+    );
   });
 
   const onSignal = async () => {

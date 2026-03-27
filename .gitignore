@@ -147,3 +147,4 @@ dbwatcher/dbwatcher
 frontend/dist/
 frontend/node_modules/
 pkg/.DS_Store
+.docker-config/

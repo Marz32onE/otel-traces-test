@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 WS_NODE_URL="${WS_NODE_URL:-http://localhost:8085}"
-WS_URL="${WS_URL:-ws://localhost:8085/ws}"
+WS_URL="${WS_URL:-ws://localhost:8085/otel-ws}"
 TEMPO_URL="${TEMPO_URL:-http://localhost:3200}"
 WAIT_FLUSH="${WAIT_FLUSH:-10}"
 
