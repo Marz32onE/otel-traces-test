@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
+	otelgorillaws "github.com/Marz32onE/instrumentation-go/otel-gorilla-ws"
 	otelmongo "github.com/Marz32onE/instrumentation-go/otel-mongo/v2"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/oteljetstream"
 	"github.com/Marz32onE/instrumentation-go/otel-nats/otelnats"
-	otelgorillaws "github.com/Marz32onE/instrumentation-go/otel-gorilla-ws"
 	"github.com/Marz32onE/otel-traces-test/pkg/otelsetup"
 	"github.com/gorilla/websocket"
 	nats "github.com/nats-io/nats.go"
@@ -178,8 +178,8 @@ func main() {
 	// 1) JetStream Consume (callback) — 消費者區分由 otelnats 的 messaging.consumer.name 表示 (worker-consume)
 	consConsume, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:       "worker-consume",
-		FilterSubject:  "messages.new",
-		AckPolicy:      oteljetstream.AckExplicitPolicy,
+		FilterSubject: "messages.new",
+		AckPolicy:     oteljetstream.AckExplicitPolicy,
 	})
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-consume): %v", err)
@@ -197,8 +197,8 @@ func main() {
 	// 2) JetStream Messages() iterator — 消費者區分: messaging.consumer.name = worker-messages；broadcast 後綴驗證用
 	consMessages, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:       "worker-messages",
-		FilterSubject:  "messages.new",
-		AckPolicy:      oteljetstream.AckExplicitPolicy,
+		FilterSubject: "messages.new",
+		AckPolicy:     oteljetstream.AckExplicitPolicy,
 	})
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-messages): %v", err)
@@ -220,11 +220,12 @@ func main() {
 		}
 	}()
 
-	// 3) JetStream Fetch (single-fetch batch, trace per message)
+	// 3) JetStream Fetch (single-fetch batch, trace per message). Run in a goroutine so
+	// ListenAndServe below is not blocked; drain all of batch.MessagesWithContext() per Fetch.
 	consFetch, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:       "worker-fetch",
-		FilterSubject:  "messages.new",
-		AckPolicy:      oteljetstream.AckExplicitPolicy,
+		FilterSubject: "messages.new",
+		AckPolicy:     oteljetstream.AckExplicitPolicy,
 	})
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-fetch): %v", err)
@@ -236,15 +237,38 @@ func main() {
 				continue
 			}
 			for m := range batch.MessagesWithContext() {
-				log.Printf("[Fetch] received: %s", string(m.Msg.Data()))
-				broadcastWithTrace(m.Ctx, m.Msg.Data(), "Fetch")
-				_ = m.Msg.Ack()
+				log.Printf("[Fetch] received: %s", string(m.Data()))
+				broadcastWithTrace(m.Ctx, m.Data(), "Fetch")
+				_ = m.Ack()
 			}
 			if batch.Error() != nil {
 				log.Printf("[Fetch] batch error: %v", batch.Error())
 			}
 		}
 	}()
+
+	// 3.5) JetStream PushConsumer example for backend integration tests.
+	// Uses an isolated subject to avoid duplicate broadcasts with existing pull consumers.
+	pushCons, err := s.CreateOrUpdatePushConsumer(ctx, oteljetstream.ConsumerConfig{
+		Durable:        "worker-push-example",
+		DeliverSubject: "worker.push.deliver",
+		FilterSubject:  "messages.push.it",
+		AckPolicy:      oteljetstream.AckExplicitPolicy,
+	})
+	if err != nil {
+		log.Printf("CreateOrUpdatePushConsumer(worker-push-example): %v", err)
+	} else {
+		pushCC, pushErr := pushCons.Consume(func(m oteljetstream.MsgWithContext) {
+			log.Printf("[PushConsume] received: %s", string(m.Data()))
+			broadcastWithTrace(m.Context(), m.Data(), "PushConsume")
+			_ = m.Ack()
+		})
+		if pushErr != nil {
+			log.Printf("PushConsume(worker-push-example): %v", pushErr)
+		} else {
+			defer pushCC.Stop()
+		}
+	}
 
 	// 4) Core NATS (fire-and-go)
 	_, err = natsConn.Subscribe("messages.core", func(m otelnats.MsgWithContext) {
@@ -258,16 +282,16 @@ func main() {
 	// 5) JetStream messages from dbwatcher (MongoDB change stream → messages.db)
 	consDB, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:       "worker-db",
-		FilterSubject:  "messages.db",
-		AckPolicy:      oteljetstream.AckExplicitPolicy,
+		FilterSubject: "messages.db",
+		AckPolicy:     oteljetstream.AckExplicitPolicy,
 	})
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-db): %v", err)
 	}
 	ccDB, err := consDB.Consume(func(m oteljetstream.MsgWithContext) {
 		var n dbNotify
-		if err := json.Unmarshal(m.Data(), &n); err != nil {
-			log.Printf("[DB] bad JSON: %v", err)
+		if unmarshalErr := json.Unmarshal(m.Data(), &n); unmarshalErr != nil {
+			log.Printf("[DB] bad JSON: %v", unmarshalErr)
 			_ = m.Ack()
 			return
 		}
@@ -280,9 +304,9 @@ func main() {
 				_ = m.Ack()
 				return
 			}
-			oid, err := bson.ObjectIDFromHex(n.ID)
-			if err != nil {
-				log.Printf("[DB] invalid id %q: %v", n.ID, err)
+			oid, objectIDErr := bson.ObjectIDFromHex(n.ID)
+			if objectIDErr != nil {
+				log.Printf("[DB] invalid id %q: %v", n.ID, objectIDErr)
 				_ = m.Ack()
 				return
 			}
@@ -290,8 +314,8 @@ func main() {
 				Text string `bson:"text"`
 			}
 			sr := msgColl.FindOneByID(m.Context(), oid)
-			if err := sr.Decode(&doc); err != nil {
-				log.Printf("[DB] FindOne %s: %v", n.ID, err)
+			if decodeErr := sr.Decode(&doc); decodeErr != nil {
+				log.Printf("[DB] FindOne %s: %v", n.ID, decodeErr)
 				_ = m.Ack()
 				return
 			}
