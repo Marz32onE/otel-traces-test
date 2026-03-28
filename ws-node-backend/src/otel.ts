@@ -1,4 +1,7 @@
 import {
+  DiagConsoleLogger,
+  DiagLogLevel,
+  diag,
   propagation,
   trace,
   type TextMapPropagator,
@@ -13,7 +16,20 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 
+const _diagLevelMap: Record<string, DiagLogLevel> = {
+  verbose: DiagLogLevel.VERBOSE,
+  debug: DiagLogLevel.DEBUG,
+  info: DiagLogLevel.INFO,
+  warn: DiagLogLevel.WARN,
+  error: DiagLogLevel.ERROR,
+};
+
 export function initOtel() {
+  const logLevel = process.env.OTEL_LOG_LEVEL?.toLowerCase();
+  if (logLevel && logLevel in _diagLevelMap) {
+    diag.setLogger(new DiagConsoleLogger(), _diagLevelMap[logLevel]);
+  }
+
   const otlpEndpoint =
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4318';
   const tracesUrl = `${otlpEndpoint.replace(/\/$/, '')}/v1/traces`;

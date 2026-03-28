@@ -68,6 +68,7 @@ API and Worker (Go) can send traces to Tempo via gRPC. The **browser** must use 
 | **OTel Collector** | OTel Collector Contrib | Receives gRPC/HTTP OTLP, forwards to Tempo; HTTP endpoint has CORS for browser                                                          | `4317` (gRPC), `4318` (HTTP)           |
 | **Tempo**        | Grafana Tempo 2.9.0      | Trace backend (**pinned 2.9.0**; v2.10+ incompatible)                                                                                    | `3200`                                 |
 | **Grafana**      | Grafana latest           | UI; anonymous Admin; Tempo datasource configured                                                                                        | `3001`                                 |
+| **ws-node-backend** | Node.js + TypeScript  | Minimal standalone demo using `@marz32one/otel-ws`; serves `/otel-ws` (instrumented) and `/ws` (plain) WebSocket paths; echoes messages with trace ID. Used by `docker-compose.ws-trace.yml`. | `8085` |
 
 ---
 
@@ -254,10 +255,11 @@ Instrumentation packages (**otelnats**, **oteljetstream**, **otelmongo**, **otel
 | Path                      | Description |
 |---------------------------|-------------|
 | `pkg/instrumentation-go`  | [instrumentation-go](https://github.com/Marz32onE/instrumentation-go) — otel-nats (otelnats + oteljetstream), otel-mongo (otelmongo), otel-gorilla-ws. Branch: `feat/trace-propagation-mod`. |
+| `pkg/instrumentation-js`  | [instrumentation-js](https://github.com/Marz32onE/instrumentation-js) — `@marz32one/otel-rxjs-ws` (RxJS drop-in), `@marz32one/otel-ws` (native Node ws). |
 
 **Dependencies (not submodules):** [dubonzi/otelresty](https://github.com/dubonzi/otelresty) — OTel for go-resty; API uses it for HTTP client spans + propagation to Worker.
 
-After clone run `git submodule update --init` for `pkg/instrumentation-go`.
+After clone run `git submodule update --init` for both submodules.
 
 ---
 
@@ -289,11 +291,20 @@ After clone run `git submodule update --init` for `pkg/instrumentation-go`.
 
 ### Frontend (build-time)
 
-| Variable                   | Default                    |
-|----------------------------|----------------------------|
-| `VITE_API_URL`             | `http://localhost:8088`   |
-| `VITE_WS_URL`              | `ws://localhost:8082`     |
-| `VITE_OTEL_COLLECTOR_URL`  | `http://localhost:4318`   |
+| Variable                   | Default                    | Description |
+|----------------------------|----------------------------|-------------|
+| `VITE_API_URL`             | `http://localhost:8088`   | API base URL |
+| `VITE_WS_URL`              | `ws://localhost:8082`     | Worker WebSocket URL |
+| `VITE_OTEL_COLLECTOR_URL`  | `http://localhost:4318`   | OTel Collector HTTP endpoint (CORS) |
+| `VITE_OTEL_LOG_LEVEL`      | _(unset = silent)_        | Enable `diag` output from JS instrumentation packages: `debug`, `info`, `warn`, `error` |
+
+### ws-node-backend
+
+| Variable                          | Default                    | Description |
+|-----------------------------------|----------------------------|-------------|
+| `PORT`                            | `8085`                     | HTTP / WebSocket listen port |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`     | `http://localhost:4318`    | OTel Collector HTTP endpoint |
+| `OTEL_LOG_LEVEL`                  | _(unset = silent)_         | Enable `diag` output from `@marz32one/otel-ws`: `debug`, `info`, `warn`, `error` |
 
 ---
 

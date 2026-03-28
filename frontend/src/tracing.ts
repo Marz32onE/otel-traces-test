@@ -1,4 +1,4 @@
-import { trace } from '@opentelemetry/api';
+import { DiagConsoleLogger, DiagLogLevel, diag, trace } from '@opentelemetry/api';
 import { initializeFaro, getWebInstrumentations } from '@grafana/faro-react';
 import { TracingInstrumentation } from '@grafana/faro-web-tracing';
 import { OtlpHttpTransport } from '@grafana/faro-transport-otlp-http';
@@ -6,6 +6,18 @@ import { API_URL, API_V1_URL } from './constants/env';
 
 const OTEL_COLLECTOR_URL =
   import.meta.env.VITE_OTEL_COLLECTOR_URL || 'http://localhost:4318';
+
+const _diagLevelMap: Record<string, DiagLogLevel> = {
+  verbose: DiagLogLevel.VERBOSE,
+  debug: DiagLogLevel.DEBUG,
+  info: DiagLogLevel.INFO,
+  warn: DiagLogLevel.WARN,
+  error: DiagLogLevel.ERROR,
+};
+const _otelLogLevel = (import.meta.env.VITE_OTEL_LOG_LEVEL ?? '').toLowerCase();
+if (_otelLogLevel in _diagLevelMap) {
+  diag.setLogger(new DiagConsoleLogger(), _diagLevelMap[_otelLogLevel]);
+}
 
 // Allow trace context (traceparent) to be sent to our API (cross-origin when port differs)
 function originToRegex(url: string): RegExp {
