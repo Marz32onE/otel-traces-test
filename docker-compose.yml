@@ -73,12 +73,28 @@ services:
     depends_on:
       - tempo
 
+  nats-trace-watcher:
+    build:
+      context: .
+      dockerfile: nats-trace-watcher/Dockerfile
+    environment:
+      - NATS_URL=nats://nats:4222
+      - NATS_TRACE_DEST=nats.trace.events
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+    depends_on:
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
   api:
     build:
       context: .
       dockerfile: api/Dockerfile
     environment:
       - NATS_URL=nats://nats:4222
+      - NATS_TRACE_DEST=nats.trace.events
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
       - MONGODB_URI=mongodb://mongodb:27017
       - WORKER_URL=http://worker:8082
@@ -135,6 +151,7 @@ services:
     environment:
       - MONGODB_URI=mongodb://mongodb:27017
       - NATS_URL=nats://nats:4222
+      - NATS_TRACE_DEST=nats.trace.events
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     depends_on:
       mongodb:

@@ -16,6 +16,7 @@ make up            # Start all services (auto-detects docker/podman)
 make down          # Stop all services
 make clean         # Stop and remove containers + volumes (full clean)
 make restart       # Restart all services
+make build         # Build all Docker images without starting
 make logs          # Tail all logs; SVC=api for a single service
 make ps            # Show service status
 make verify-trace  # Verify end-to-end trace propagation (API → Mongo → Tempo)
@@ -80,6 +81,14 @@ cd frontend
 npm install
 npm run dev      # Vite dev server
 npm run build    # Production build
+```
+
+### ws-node-backend development (minimal WebSocket demo)
+```bash
+cd ws-node-backend
+npm install
+npm run build    # TypeScript compile → dist/
+npm start        # Run compiled server (PORT=8085)
 ```
 
 ### Instrumentation packages (`pkg/instrumentation-js/`)

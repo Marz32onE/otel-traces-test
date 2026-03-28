@@ -62,9 +62,14 @@ func main() {
 	if natsURL == "" {
 		natsURL = "nats://localhost:4222"
 	}
+	natsTraceDest := os.Getenv("NATS_TRACE_DEST")
 	var natsConn *otelnats.Conn
 	for i := 0; i < 10; i++ {
-		natsConn, err = otelnats.ConnectWithOptions(natsURL, nil, otelnats.WithTracerProvider(tp), otelnats.WithPropagators(prop))
+		natsConn, err = otelnats.ConnectWithOptions(natsURL, nil,
+			otelnats.WithTracerProvider(tp),
+			otelnats.WithPropagators(prop),
+			otelnats.WithTraceDestination(natsTraceDest),
+		)
 		if err == nil {
 			break
 		}
