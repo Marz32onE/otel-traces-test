@@ -212,5 +212,45 @@ else
   echo "  OK: Tempo has websocket.send span (Worker WebSocket broadcast confirmed)"
 fi
 
+
+# --- 3) PushConsumer path (API → messages.push.it → worker PushConsumer → WebSocket → Tempo) ---
+echo ""
+echo "--- Path 3: PushConsumer (API → messages.push.it → worker-push-example → Tempo) ---"
+
+if [ "$VERIFY_TRACE_SKIP_WS" = "1" ]; then
+  echo "  SKIP: VERIFY_TRACE_SKIP_WS=1"
+else
+  PUSH_CHECK_START=$(( $(date +%s) - 5 ))
+
+  resp=$(curl -s -w "\n%{http_code}" -X POST "$API_URL/api/message-push" \
+    -H "Content-Type: application/json" \
+    -d '{"text":"check-trace-propagation-push"}')
+  code=$(echo "$resp" | tail -n 1)
+  body=$(echo "$resp" | sed '$d')
+  if [ "$code" != "200" ]; then
+    echo "  FAIL: POST /api/message-push returned HTTP $code"
+    echo "$body"
+    exit 1
+  fi
+  echo "  OK: POST /api/message-push accepted (HTTP 200)"
+
+  TRACE_ID_PUSH=$(echo "$body" | sed -n 's/.*"trace_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  [ -n "$TRACE_ID_PUSH" ] && echo "  trace_id from API: $TRACE_ID_PUSH"
+
+  echo "  Waiting ${WAIT_FLUSH}s for trace flush..."
+  sleep "$WAIT_FLUSH"
+
+  PUSH_CHECK_END=$(( $(date +%s) + 30 ))
+  push_search=$(curl -s -G "${TEMPO_URL}/api/search" \
+    --data "tags=messaging.consumer.name%3Dworker-push-example&start=${PUSH_CHECK_START}&end=${PUSH_CHECK_END}&limit=1")
+  push_count=$(echo "$push_search" | grep -c '"traceID"' 2>/dev/null || echo "0")
+  if [ "${push_count:-0}" -ge 1 ]; then
+    echo "  OK: PushConsumer span found in Tempo (worker-push-example)"
+  else
+    echo "  WARN: No PushConsumer span found for worker-push-example in Tempo"
+    echo "        (check worker logs: grep PushConsume)"
+  fi
+fi
+
 echo ""
 echo "=== Trace propagation check: done ==="

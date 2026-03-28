@@ -119,6 +119,7 @@ func main() {
 
 	r.POST("/api/message", handleMessage)                  // JetStream (natstrace)
 	r.POST("/api/message-core", handleMessageCore)         // Core NATS fire-and-go
+	r.POST("/api/message-push", handleMessagePush)         // JetStream PushConsumer demo
 	r.POST("/api/message-mongo", handleMessageMongo)       // MongoDB Insert
 	r.POST("/api/message-via-worker", handleMessageViaWorker) // HTTP to Worker (otelresty)
 	r.POST("/api/message-mongo-update", handleMessageMongoUpdate)
@@ -159,6 +160,25 @@ func handleMessage(c *gin.Context) {
 		"status":   "published",
 		"trace_id": getTraceIDFromContext(ctx),
 		"endpoint": "JetStream",
+	})
+}
+
+// handleMessagePush publishes to messages.push.it — consumed by worker's PushConsumer demo.
+func handleMessagePush(c *gin.Context) {
+	var req MessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	if _, err := jetstreamJS.Publish(ctx, "messages.push.it", []byte(req.Text)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to publish message"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "published",
+		"trace_id": getTraceIDFromContext(ctx),
+		"endpoint": "JetStream PushConsumer",
 	})
 }
 

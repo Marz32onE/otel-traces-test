@@ -270,6 +270,27 @@ func main() {
 		}
 	}
 
+	// 3.6) JetStream OrderedConsumer — ephemeral, no Ack needed, server auto-recreates on reconnect.
+	// NamePrefix becomes the messaging.consumer.name span attribute.
+	orderedCons, orderedErr := s.OrderedConsumer(ctx, oteljetstream.OrderedConsumerConfig{
+		FilterSubjects: []string{"messages.new"},
+		NamePrefix:     "worker-ordered",
+	})
+	if orderedErr != nil {
+		log.Printf("OrderedConsumer: %v", orderedErr)
+	} else {
+		orderedCC, orderedConsumeErr := orderedCons.Consume(func(m oteljetstream.MsgWithContext) {
+			log.Printf("[Ordered] received: %s", string(m.Data()))
+			broadcastWithTrace(m.Context(), m.Data(), "Ordered")
+			// OrderedConsumer does not require Ack
+		})
+		if orderedConsumeErr != nil {
+			log.Printf("OrderedConsumer.Consume: %v", orderedConsumeErr)
+		} else {
+			defer orderedCC.Stop()
+		}
+	}
+
 	// 4) Core NATS (fire-and-go)
 	_, err = natsConn.Subscribe("messages.core", func(m otelnats.MsgWithContext) {
 		log.Printf("Received core NATS message: %s", string(m.Msg.Data))
