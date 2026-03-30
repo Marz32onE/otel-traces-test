@@ -38,8 +38,8 @@ export function initOtel() {
     propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()],
   });
 
-  // IMPORTANT: `@marz32one/otel-ws` uses the global API tracer provider + global
-  // propagator, so we must register them here.
+  // IMPORTANT: `@marz32one/otel-ws` (client + instrumentSocket server patch) uses
+  // the global API tracer provider + global propagator, so we must register them here.
   propagation.setGlobalPropagator(propagator);
 
   const exporter = new OTLPTraceExporter({ url: tracesUrl });

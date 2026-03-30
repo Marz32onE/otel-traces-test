@@ -3,19 +3,38 @@ import net from 'net';
 import WebSocket from 'ws';
 type Ws = WebSocket;
 import { trace, context as otelContext } from '@opentelemetry/api';
-
 import { instrumentSocket } from '@marz32one/otel-ws';
 import { initOtel } from './otel.js';
 
 type WsPayload = { text: string };
-type WsAck = { ack: true; echo: string; traceId?: string };
+type WsAck = { ack: true; echo: string; traceId?: string; transport: 'sendFrame' | 'send' };
+type WsInternalSender = {
+  sendFrame: (list: Buffer[], cb?: (err?: Error) => void) => void;
+};
+type WsWithInternals = Ws & { _sender?: WsInternalSender };
+type SenderFrameFn = (data: Buffer, options: unknown) => Buffer[];
 
 let lastTraceId: string | null = null;
+const wsSendFrameDebug = process.env.WS_SENDFRAME_DEBUG === '1';
+
+function debugLog(message: string, meta?: unknown): void {
+  if (!wsSendFrameDebug) return;
+  // eslint-disable-next-line no-console
+  console.debug(`[ws-node-backend] ${message}`, meta ?? '');
+}
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(body));
+}
+
+function asWsPayload(raw: unknown): WsPayload | null {
+  if (!raw || typeof raw !== 'object' || Buffer.isBuffer(raw) || Array.isArray(raw) || raw instanceof ArrayBuffer) {
+    return null;
+  }
+  if (!('text' in raw)) return null;
+  return { text: String((raw as { text?: unknown }).text ?? '') };
 }
 
 const port = Number(process.env.PORT ?? 8085);
@@ -57,11 +76,11 @@ async function main() {
   });
 
   wssOtel.on('connection', (ws: Ws) => {
-    // - send(): WsAck
-    // - onMessage handler input: WsPayload
-    const sock = instrumentSocket<WsAck, WsPayload>(ws);
-
-    sock.onMessage((data, ctx) => {
+    const sock = instrumentSocket(ws) as Ws;
+    sock.on('message', (raw) => {
+      const parsed = asWsPayload(raw);
+      const data: WsPayload | string = parsed ?? String(raw);
+      const ctx = otelContext.active();
       const sc = trace.getSpanContext(ctx);
       if (sc?.traceId) lastTraceId = sc.traceId;
 
@@ -69,11 +88,42 @@ async function main() {
         data && typeof data === 'object' && 'text' in data
           ? (data as WsPayload).text
           : String(data);
-      const ack: WsAck = { ack: true, echo, traceId: lastTraceId ?? undefined };
+      const ackBase: Omit<WsAck, 'transport'> = { ack: true, echo, traceId: lastTraceId ?? undefined };
 
       // Ensure send is linked to the context created by otel-ws's receive handling.
       otelContext.with(ctx, () => {
-        sock.send(ack);
+        const sender = (sock as WsWithInternals)._sender;
+        const frameFn = (WebSocket as unknown as { Sender?: { frame?: SenderFrameFn } }).Sender?.frame;
+        if (!sender || typeof sender.sendFrame !== 'function' || typeof frameFn !== 'function') {
+          debugLog('sendFrame unavailable, fallback to sock.send');
+          sock.send({ ...ackBase, transport: 'send' });
+          return;
+        }
+
+        const payload = JSON.stringify({ ...ackBase, transport: 'sendFrame' as const });
+        const options = {
+          fin: true,
+          rsv1: false,
+          opcode: 1,
+          mask: false,
+          readOnly: false,
+        };
+
+        try {
+          const frameParts = frameFn(Buffer.from(payload, 'utf8'), options);
+          const mergedFrame = Buffer.concat(frameParts);
+          sender.sendFrame([mergedFrame], (err?: Error) => {
+            if (err) {
+              debugLog('sendFrame failed, fallback to sock.send', { error: err.message });
+              sock.send({ ...ackBase, transport: 'send' });
+              return;
+            }
+            debugLog('sendFrame success');
+          });
+        } catch (err) {
+          debugLog('sendFrame throw, fallback to sock.send', { error: (err as Error).message });
+          sock.send({ ...ackBase, transport: 'send' });
+        }
       });
     });
   });
