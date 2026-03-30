@@ -2,6 +2,12 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY frontend/package*.json ./frontend/
 COPY pkg/instrumentation-js ./pkg/instrumentation-js/
+
+# Build otel-rxjs-ws so dist/ exists before Vite resolves @marz32one/otel-rxjs-ws.
+WORKDIR /app/pkg/instrumentation-js/packages/otel-rxjs-ws
+RUN npm install --ignore-scripts
+RUN npm run build
+
 WORKDIR /app/frontend
 RUN npm install
 COPY frontend/ ./
