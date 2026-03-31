@@ -13,7 +13,6 @@ import { tracer } from './tracing';
 type ServerAck = { ack: true; echo: string; traceId?: string };
 
 const WS_OTEL_URL_DEFAULT = 'ws://localhost:8085/otel-ws';
-const WS_PLAIN_URL_DEFAULT = 'ws://localhost:8085/ws';
 const RECONNECT_MS = 2000;
 
 function appendLine(setter: (updater: (prev: string[]) => string[]) => void, text: string) {
@@ -31,7 +30,7 @@ function asText(value: unknown): string {
 
 function defaultWsUrl(path: '/otel-ws' | '/ws'): string {
   if (typeof window === 'undefined') {
-    return path === '/otel-ws' ? WS_OTEL_URL_DEFAULT : WS_PLAIN_URL_DEFAULT;
+    return WS_OTEL_URL_DEFAULT;
   }
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
   return `${protocol}://${window.location.host}${path}`;
@@ -42,28 +41,18 @@ export default function App() {
     () => import.meta.env.VITE_WS_OTEL_URL ?? defaultWsUrl('/otel-ws'),
     [],
   );
-  const wsPlainUrl = useMemo(
-    () => import.meta.env.VITE_WS_PLAIN_URL ?? defaultWsUrl('/ws'),
-    [],
-  );
-
   const [inputText, setInputText] = useState('{"text":"check-ws-trace"}');
   const [clientTraceId, setClientTraceId] = useState<string | null>(null);
 
   const [otelStatus, setOtelStatus] = useState('Connecting...');
-  const [plainStatus, setPlainStatus] = useState('Connecting...');
   const [otelTraceId, setOtelTraceId] = useState<string | null>(null);
 
   const [clientLog, setClientLog] = useState<string[]>([]);
   const [otelLog, setOtelLog] = useState<string[]>([]);
-  const [plainLog, setPlainLog] = useState<string[]>([]);
   const [otelRetry, setOtelRetry] = useState(0);
-  const [plainRetry, setPlainRetry] = useState(0);
 
   const otelSocketRef = useRef<WebSocketSubject<unknown> | null>(null);
-  const plainSocketRef = useRef<WebSocket | null>(null);
   const otelRetryTimerRef = useRef<number | null>(null);
-  const plainRetryTimerRef = useRef<number | null>(null);
 
   const parsePayload = useCallback((): unknown => {
     const value = inputText.trim();
@@ -126,33 +115,6 @@ export default function App() {
     };
   }, [wsOtelUrl, otelRetry]);
 
-  useEffect(() => {
-    const wsPlain = new WebSocket(wsPlainUrl);
-    plainSocketRef.current = wsPlain;
-    wsPlain.onopen = () => setPlainStatus('Connected');
-    wsPlain.onclose = () => {
-      setPlainStatus('Reconnecting...');
-      if (plainRetryTimerRef.current) window.clearTimeout(plainRetryTimerRef.current);
-      plainRetryTimerRef.current = window.setTimeout(() => {
-        setPlainRetry((v) => v + 1);
-      }, RECONNECT_MS);
-    };
-    wsPlain.onerror = () => {
-      setPlainStatus('Reconnecting...');
-    };
-    wsPlain.onmessage = (event) => {
-      appendLine(setPlainLog, String(event.data));
-    };
-
-    return () => {
-      wsPlain.close();
-      if (plainRetryTimerRef.current) {
-        window.clearTimeout(plainRetryTimerRef.current);
-        plainRetryTimerRef.current = null;
-      }
-    };
-  }, [wsPlainUrl, plainRetry]);
-
   const handleSend = useCallback(() => {
     const payload = parsePayload();
 
@@ -171,13 +133,6 @@ export default function App() {
     appendLine(setClientLog, `send: ${asText(payload)}`);
     parent.setStatus({ code: SpanStatusCode.OK });
     parent.end();
-
-    const plainSocket = plainSocketRef.current;
-    if (plainSocket?.readyState === WebSocket.OPEN) {
-      plainSocket.send(asText(payload));
-    } else {
-      appendLine(setPlainLog, 'error: plain ws not connected');
-    }
   }, [parsePayload]);
 
   return (
@@ -192,14 +147,14 @@ export default function App() {
         onChange={(e) => setInputText(e.target.value)}
       />
       <button type="button" onClick={handleSend}>
-        Send To /otel-ws + /ws
+        Send To /otel-ws
       </button>
 
       <div
         style={{
           marginTop: 16,
           display: 'grid',
-          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
           gap: 12,
         }}
       >
@@ -216,12 +171,6 @@ export default function App() {
           <textarea readOnly rows={16} style={{ width: '100%' }} value={otelLog.join('\n')} />
         </section>
 
-        <section>
-          <h3>plain ws endpoint (/ws)</h3>
-          <p>Status: <b>{plainStatus}</b></p>
-          <p>Trace ID: <b>-</b></p>
-          <textarea readOnly rows={16} style={{ width: '100%' }} value={plainLog.join('\n')} />
-        </section>
       </div>
     </div>
   );
