@@ -7,7 +7,7 @@ import { instrumentSocket } from '@marz32one/otel-ws';
 import { initOtel } from './otel.js';
 
 type WsPayload = { text: string };
-type WsAck = { ack: true; echo: string; traceId?: string; transport: 'sendFrame' | 'send' };
+type WsAck = { ack: true; echo: string; traceId?: string };
 type WsInternalSender = {
   sendFrame: (list: Buffer[], cb?: (err?: Error) => void) => void;
 };
@@ -88,7 +88,7 @@ async function main() {
         data && typeof data === 'object' && 'text' in data
           ? (data as WsPayload).text
           : String(data);
-      const ackBase: Omit<WsAck, 'transport'> = { ack: true, echo, traceId: lastTraceId ?? undefined };
+      const ack: WsAck = { ack: true, echo, traceId: lastTraceId ?? undefined };
 
       // Ensure send is linked to the context created by otel-ws's receive handling.
       otelContext.with(ctx, () => {
@@ -96,11 +96,11 @@ async function main() {
         const frameFn = (WebSocket as unknown as { Sender?: { frame?: SenderFrameFn } }).Sender?.frame;
         if (!sender || typeof sender.sendFrame !== 'function' || typeof frameFn !== 'function') {
           debugLog('sendFrame unavailable, fallback to sock.send');
-          sock.send({ ...ackBase, transport: 'send' });
+          sock.send(ack);
           return;
         }
 
-        const payload = JSON.stringify({ ...ackBase, transport: 'sendFrame' as const });
+        const payload = JSON.stringify(ack);
         const options = {
           fin: true,
           rsv1: false,
@@ -115,14 +115,14 @@ async function main() {
           sender.sendFrame([mergedFrame], (err?: Error) => {
             if (err) {
               debugLog('sendFrame failed, fallback to sock.send', { error: err.message });
-              sock.send({ ...ackBase, transport: 'send' });
+              sock.send(ack);
               return;
             }
             debugLog('sendFrame success');
           });
         } catch (err) {
           debugLog('sendFrame throw, fallback to sock.send', { error: (err as Error).message });
-          sock.send({ ...ackBase, transport: 'send' });
+          sock.send(ack);
         }
       });
     });
