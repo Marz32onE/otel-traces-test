@@ -26,7 +26,8 @@ import (
 
 var (
 	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
+		CheckOrigin:  func(r *http.Request) bool { return true },
+		Subprotocols: []string{"otel-ws"},
 	}
 	clients   = make(map[*otelgorillaws.Conn]bool)
 	clientsMu sync.Mutex
@@ -184,7 +185,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-consume): %v", err)
 	}
-	cc, err := consConsume.Consume(func(m oteljetstream.MsgWithContext) {
+	cc, err := consConsume.Consume(func(m oteljetstream.Msg) {
 		log.Printf("[Consume] received: %s", string(m.Data()))
 		broadcastWithTrace(m.Context(), m.Data(), "Consume")
 		_ = m.Ack()
@@ -221,7 +222,7 @@ func main() {
 	}()
 
 	// 3) JetStream Fetch (single-fetch batch, trace per message). Run in a goroutine so
-	// ListenAndServe below is not blocked; drain all of batch.MessagesWithContext() per Fetch.
+	// ListenAndServe below is not blocked; drain all of batch.Messages() per Fetch.
 	consFetch, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:       "worker-fetch",
 		FilterSubject: "messages.new",
@@ -236,7 +237,7 @@ func main() {
 			if fetchErr != nil {
 				continue
 			}
-			for m := range batch.MessagesWithContext() {
+			for m := range batch.Messages() {
 				log.Printf("[Fetch] received: %s", string(m.Data()))
 				broadcastWithTrace(m.Ctx, m.Data(), "Fetch")
 				_ = m.Ack()
@@ -258,7 +259,7 @@ func main() {
 	if err != nil {
 		log.Printf("CreateOrUpdatePushConsumer(worker-push-example): %v", err)
 	} else {
-		pushCC, pushErr := pushCons.Consume(func(m oteljetstream.MsgWithContext) {
+		pushCC, pushErr := pushCons.Consume(func(m oteljetstream.Msg) {
 			log.Printf("[PushConsume] received: %s", string(m.Data()))
 			broadcastWithTrace(m.Context(), m.Data(), "PushConsume")
 			_ = m.Ack()
@@ -279,7 +280,7 @@ func main() {
 	if orderedErr != nil {
 		log.Printf("OrderedConsumer: %v", orderedErr)
 	} else {
-		orderedCC, orderedConsumeErr := orderedCons.Consume(func(m oteljetstream.MsgWithContext) {
+		orderedCC, orderedConsumeErr := orderedCons.Consume(func(m oteljetstream.Msg) {
 			log.Printf("[Ordered] received: %s", string(m.Data()))
 			broadcastWithTrace(m.Context(), m.Data(), "Ordered")
 			// OrderedConsumer does not require Ack
@@ -292,7 +293,7 @@ func main() {
 	}
 
 	// 4) Core NATS (fire-and-go)
-	_, err = natsConn.Subscribe("messages.core", func(m otelnats.MsgWithContext) {
+	_, err = natsConn.Subscribe("messages.core", func(m otelnats.Msg) {
 		log.Printf("Received core NATS message: %s", string(m.Msg.Data))
 		broadcastWithTrace(m.Context(), m.Msg.Data, "Core")
 	})
@@ -309,7 +310,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("CreateOrUpdateConsumer(worker-db): %v", err)
 	}
-	ccDB, err := consDB.Consume(func(m oteljetstream.MsgWithContext) {
+	ccDB, err := consDB.Consume(func(m oteljetstream.Msg) {
 		var n dbNotify
 		if unmarshalErr := json.Unmarshal(m.Data(), &n); unmarshalErr != nil {
 			log.Printf("[DB] bad JSON: %v", unmarshalErr)
