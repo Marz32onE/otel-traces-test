@@ -16,7 +16,6 @@ type SenderFrameFn = (data: Buffer, options: unknown) => Buffer[];
 
 let lastTraceId: string | null = null;
 const wsSendFrameDebug = process.env.WS_SENDFRAME_DEBUG === "1";
-const OTEL_WS_PROTOCOL = "otel-ws";
 
 function debugLog(message: string, meta?: unknown): void {
   if (!wsSendFrameDebug) return;
@@ -44,20 +43,9 @@ function asWsPayload(raw: unknown): WsPayload | null {
   return { text: String((raw as { text?: unknown }).text ?? "") };
 }
 
-function hasOtelProtocol(req: http.IncomingMessage): boolean {
-  const protocolHeader = req.headers["sec-websocket-protocol"];
-  if (!protocolHeader) return false;
-  const value = Array.isArray(protocolHeader)
-    ? protocolHeader.join(",")
-    : protocolHeader;
-  return value
-    .split(",")
-    .map((token) => token.trim())
-    .includes(OTEL_WS_PROTOCOL);
-}
-
 function rejectUpgrade(socket: net.Socket): void {
-  const body = "Sec-WebSocket-Protocol 'otel-ws' is required for /otel-ws";
+  const body =
+    "Sec-WebSocket-Protocol must include otel-ws or otel-ws+… for /otel-ws";
   socket.write(
     "HTTP/1.1 426 Upgrade Required\r\n" +
       "Connection: close\r\n" +
@@ -98,6 +86,8 @@ async function main() {
   const wssOtel = new OtelWebSocket.Server({
     noServer: true,
     perMessageDeflate: false,
+    handleProtocols: (protocols: Iterable<string>) =>
+      [...protocols].includes("json") ? "json" : false,
   });
   const wssPlain = new WebSocket.Server({
     noServer: true,
@@ -111,14 +101,8 @@ async function main() {
       `http://${req.headers.host ?? "localhost"}`,
     ).pathname;
     if (pathname === "/otel-ws") {
-      if (!hasOtelProtocol(req)) {
-        rejectUpgrade(netSocket);
-        return;
-      }
       wssOtel.handleUpgrade(req, netSocket, head, (ws: Ws) =>
-        ws.protocol === OTEL_WS_PROTOCOL
-          ? wssOtel.emit("connection", ws, req)
-          : ws.close(1002, "otel-ws protocol negotiation required"),
+        wssOtel.emit("connection", ws, req),
       );
     } else if (pathname === "/ws") {
       wssPlain.handleUpgrade(req, netSocket, head, (ws: Ws) =>
@@ -130,6 +114,19 @@ async function main() {
   });
 
   wssOtel.on("connection", (ws: Ws) => {
+    debugLog("otel-ws connection", {
+      protocol: ws.protocol,
+    });
+    if (ws.protocol !== "json") {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[ws-node-backend] /otel-ws expected user subprotocol json, got:",
+        JSON.stringify(ws.protocol),
+      );
+      ws.close(1002, "json subprotocol required");
+      return;
+    }
+
     ws.on("message", (raw) => {
       const parsed = asWsPayload(raw);
       const data: WsPayload | string = parsed ?? String(raw);

@@ -67,6 +67,8 @@ export default function App() {
   useEffect(() => {
     const wsOtel = webSocket<unknown>({
       url: wsOtelUrl,
+      // App-level subprotocol: only "json"; otel-rxjs-ws prepends otel-ws wire tokens.
+      protocol: 'json',
       openObserver: {
         next: () => setOtelStatus('Connected'),
       },
