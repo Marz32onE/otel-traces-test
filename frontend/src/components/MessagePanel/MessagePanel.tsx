@@ -6,6 +6,7 @@ export type PanelButton = {
   onClick: () => void;
   title?: string;
   variant?: "primary" | "secondary";
+  disabled?: boolean;
 };
 
 type MessagePanelProps = {
@@ -16,6 +17,8 @@ type MessagePanelProps = {
   onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
   buttons: PanelButton[];
   traceFlowText: string;
+  /** Optional line under the title (e.g. NATS WebSocket connection state). */
+  connectionStatus?: string;
 };
 
 export function MessagePanel({
@@ -26,10 +29,16 @@ export function MessagePanel({
   onKeyDown,
   buttons,
   traceFlowText,
+  connectionStatus,
 }: MessagePanelProps) {
   return (
     <div style={styles.panel}>
       <h2 style={styles.panelTitle}>{title}</h2>
+      {connectionStatus ? (
+        <p style={{ margin: "0 0 8px", fontSize: 12, opacity: 0.9 }}>
+          {connectionStatus}
+        </p>
+      ) : null}
       <div style={styles.inputRow}>
         <input
           style={styles.input}
@@ -51,6 +60,7 @@ export function MessagePanel({
             }
             onClick={btn.onClick}
             title={btn.title}
+            disabled={btn.disabled}
           >
             {btn.label}
           </button>

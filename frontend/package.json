@@ -9,7 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@marz32one/otel-nats": "file:../pkg/instrumentation-js/packages/otel-nats",
     "@marz32one/otel-rxjs-ws": "file:../pkg/instrumentation-js/packages/otel-rxjs-ws",
+    "@nats-io/jetstream": "^3.3.1",
+    "@nats-io/nats-core": "^3.3.1",
     "@grafana/faro-react": "^2.2.4",
     "@grafana/faro-transport-otlp-http": "^2.2.4",
     "@grafana/faro-web-tracing": "^2.2.4",

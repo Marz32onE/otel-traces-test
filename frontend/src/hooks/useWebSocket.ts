@@ -37,6 +37,9 @@ export function useWebSocket() {
 
       const ws = webSocket<WorkerMessagePayload>({
         url: `${WS_URL}/ws`,
+        // Offer otel-ws+json so negotiated subprotocol enables envelope parsing; server sends
+        // { header, data } from otel-gorilla-ws WriteMessage (see worker Subprotocols).
+        protocol: ["json"],
         openObserver: {
           next: () => setStatus("Connected"),
         },

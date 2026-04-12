@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import type { KeyboardEvent } from "react";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useMessageSender } from "./hooks/useMessageSender";
+import { useNatsBrowser } from "./hooks/useNatsBrowser";
 import {
   MessagePanel,
   MongoPanel,
@@ -14,11 +15,18 @@ import { API_V1_URL } from "./constants/env";
 
 export default function App() {
   const [natsInputText, setNatsInputText] = useState("");
+  const [natsBrowserInputText, setNatsBrowserInputText] = useState("");
   const [workerHttpInputText, setWorkerHttpInputText] = useState("");
   const [mongoInputText, setMongoInputText] = useState("");
   const [mongoInputTextV1, setMongoInputTextV1] = useState("");
 
   const { messages, status, lastReceivedTraceId } = useWebSocket();
+  const {
+    natsWsStatus,
+    natsReady,
+    publishJetStream: publishNatsBrowserJs,
+    publishCore: publishNatsBrowserCore,
+  } = useNatsBrowser();
   const {
     sendToEndpoint,
     lastTrace,
@@ -56,6 +64,16 @@ export default function App() {
         );
     },
     [natsInputText, send],
+  );
+
+  const handleNatsBrowserKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== "Enter" || !natsReady) return;
+      void publishNatsBrowserJs(natsBrowserInputText)
+        .then(() => setNatsBrowserInputText(""))
+        .catch(() => undefined);
+    },
+    [natsBrowserInputText, natsReady, publishNatsBrowserJs],
   );
 
   const handleWorkerHttpKeyDown = useCallback(
@@ -136,6 +154,40 @@ export default function App() {
             },
           ]}
           traceFlowText="Frontend → API → NATS (JetStream/Core) → Worker → WebSocket"
+        />
+
+        <MessagePanel
+          title="NATS（瀏覽器 / otel-nats）"
+          value={natsBrowserInputText}
+          onChange={setNatsBrowserInputText}
+          onKeyDown={handleNatsBrowserKeyDown}
+          connectionStatus={natsWsStatus}
+          buttons={[
+            {
+              label: "送出（JetStream）",
+              title: "wsconnect + createJetStream — subject messages.new",
+              onClick: () =>
+                void publishNatsBrowserJs(natsBrowserInputText)
+                  .then(() => setNatsBrowserInputText(""))
+                  .catch(() => undefined),
+              disabled: !natsReady,
+            },
+            {
+              label: "送出（Core NATS）",
+              variant: "secondary",
+              title: "wsconnect — subject messages.core",
+              onClick: () => {
+                try {
+                  publishNatsBrowserCore(natsBrowserInputText);
+                  setNatsBrowserInputText("");
+                } catch {
+                  /* alert in hook */
+                }
+              },
+              disabled: !natsReady,
+            },
+          ]}
+          traceFlowText="Frontend → NATS (WebSocket) → Worker → WebSocket（無 API HTTP）"
         />
 
         <MessagePanel

@@ -27,12 +27,14 @@ services:
 
   nats:
     image: nats:alpine
-    command: ["-js", "-sd", "/data", "-m", "8222"]
+    command: ["-c", "/etc/nats/nats-server.conf"]
     volumes:
       - nats_data:/data
+      - ./nats/nats-server.conf:/etc/nats/nats-server.conf:ro
     ports:
       - "4222:4222"
       - "8222:8222"
+      - "9222:9222"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
       interval: 5s
@@ -170,6 +172,7 @@ services:
         - VITE_API_URL=http://localhost:8088
         - VITE_API_V1_URL=http://localhost:8089
         - VITE_WS_URL=ws://localhost:8082
+        - VITE_NATS_WS_URL=ws://localhost:9222
         - VITE_OTEL_COLLECTOR_URL=http://localhost:4318
     ports:
       - "3000:3000"

@@ -8,16 +8,22 @@ WORKDIR /app/pkg/instrumentation-js/packages/otel-rxjs-ws
 RUN npm install --ignore-scripts
 RUN npm run build
 
+WORKDIR /app/pkg/instrumentation-js/packages/otel-nats
+RUN npm install --ignore-scripts
+RUN npm run build
+
 WORKDIR /app/frontend
 RUN npm install
 COPY frontend/ ./
 ARG VITE_API_URL=http://localhost:8088
 ARG VITE_API_V1_URL=http://localhost:8089
 ARG VITE_WS_URL=ws://localhost:8082
+ARG VITE_NATS_WS_URL=ws://localhost:9222
 ARG VITE_OTEL_COLLECTOR_URL=http://localhost:4318
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_API_V1_URL=$VITE_API_V1_URL
 ENV VITE_WS_URL=$VITE_WS_URL
+ENV VITE_NATS_WS_URL=$VITE_NATS_WS_URL
 ENV VITE_OTEL_COLLECTOR_URL=$VITE_OTEL_COLLECTOR_URL
 RUN npm run build
 

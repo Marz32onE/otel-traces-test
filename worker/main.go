@@ -25,9 +25,11 @@ import (
 )
 
 var (
+	// Accept otel-ws+json first so browsers using @marz32one/otel-rxjs-ws with protocol: ['json']
+	// negotiate envelope mode (matches otel-gorilla-ws WriteMessage wire format).
 	upgrader = websocket.Upgrader{
 		CheckOrigin:  func(r *http.Request) bool { return true },
-		Subprotocols: []string{"otel-ws"},
+		Subprotocols: []string{"otel-ws+json", "otel-ws"},
 	}
 	clients   = make(map[*otelgorillaws.Conn]bool)
 	clientsMu sync.Mutex
