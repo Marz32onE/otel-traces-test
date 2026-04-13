@@ -20,16 +20,14 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 var (
 	// Accept otel-ws+json first so browsers using @marz32one/otel-rxjs-ws with protocol: ['json']
 	// negotiate envelope mode (matches otel-gorilla-ws WriteMessage wire format).
-	upgrader = websocket.Upgrader{
+	upgrader = otelgorillaws.Upgrader{
 		CheckOrigin:  func(r *http.Request) bool { return true },
-		Subprotocols: []string{"otel-ws+json", "otel-ws"},
+		Subprotocols: []string{"json"},
 	}
 	clients   = make(map[*otelgorillaws.Conn]bool)
 	clientsMu sync.Mutex
@@ -58,14 +56,13 @@ func broadcastWithTrace(ctx context.Context, body []byte, apiName string) {
 	}
 }
 
-func wsHandler(tp *sdktrace.TracerProvider, prop propagation.TextMapPropagator) http.HandlerFunc {
+func wsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		raw, err := upgrader.Upgrade(w, r, nil)
+		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Printf("Upgrade error: %v", err)
 			return
 		}
-		conn := otelgorillaws.NewConn(raw, otelgorillaws.WithTracerProvider(tp), otelgorillaws.WithPropagators(prop))
 		defer func() {
 			clientsMu.Lock()
 			delete(clients, conn)
@@ -77,9 +74,10 @@ func wsHandler(tp *sdktrace.TracerProvider, prop propagation.TextMapPropagator) 
 		clients[conn] = true
 		clientsMu.Unlock()
 
-		log.Printf("WebSocket client connected: %s", raw.RemoteAddr())
+		log.Printf("WebSocket client connected: %s", conn.RemoteAddr())
+		readCtx := r.Context()
 		for {
-			if _, _, err := raw.ReadMessage(); err != nil {
+			if _, _, _, err := conn.ReadMessage(readCtx); err != nil {
 				break
 			}
 		}
@@ -360,7 +358,7 @@ func main() {
 	defer ccDB.Stop()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /ws", wsHandler(tp, prop))
+	mux.HandleFunc("GET /ws", wsHandler())
 	mux.HandleFunc("POST /notify", notifyHandler)
 
 	handler := otelhttp.NewHandler(mux, "worker")
