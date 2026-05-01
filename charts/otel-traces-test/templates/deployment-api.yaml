@@ -22,6 +22,16 @@ spec:
             - containerPort: 8088
           env:
             - name: NATS_URL
-              value: "nats://{{ .Release.Name }}-nats:4222"
+              value: {{ .Values.api.env.NATS_URL | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "{{ .Release.Name }}-otel-collector:4317"
+              value: {{ .Values.api.env.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}
+            - name: OTEL_INSTRUMENTATION_GO_TRACING_ENABLED
+              value: {{ .Values.api.env.OTEL_INSTRUMENTATION_GO_TRACING_ENABLED | quote }}
+            - name: OTEL_MONGO_TRACING_ENABLED
+              value: {{ .Values.api.env.OTEL_MONGO_TRACING_ENABLED | quote }}
+            - name: OTEL_MONGO_PROPAGATION_ENABLED
+              value: {{ .Values.api.env.OTEL_MONGO_PROPAGATION_ENABLED | quote }}
+            - name: OTEL_NATS_TRACING_ENABLED
+              value: {{ .Values.api.env.OTEL_NATS_TRACING_ENABLED | quote }}
+            - name: OTEL_GORILLA_WS_TRACING_ENABLED
+              value: {{ .Values.api.env.OTEL_GORILLA_WS_TRACING_ENABLED | quote }}

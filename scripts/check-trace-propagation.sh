@@ -96,6 +96,7 @@ echo "  Tempo: $TEMPO_URL"
 # --- 1) MongoDB path (API → Mongo → dbwatcher → NATS → Worker; trace in Tempo) ---
 echo ""
 echo "--- Path 1: MongoDB (API → Mongo → Tempo) ---"
+MONGO_CHECK_START=$(( $(date +%s) - 5 ))
 resp=$(curl -s -w "\n%{http_code}" -X POST "$API_URL/api/message-mongo" \
   -H "Content-Type: application/json" \
   -d '{"text":"check-trace-propagation-mongo"}')
@@ -130,6 +131,26 @@ if ! trace_response_ok "$trace_json"; then
   exit 1
 fi
 echo "  OK: Tempo returned trace for trace_id $TRACE_ID_MONGO"
+
+# Strengthen Mongo propagation visibility: try to find messages.db spans in Tempo search index.
+# Different Tempo versions/indexers can expose different tag keys, so this is best-effort.
+MONGO_CHECK_END=$(( $(date +%s) + 30 ))
+mongo_count=0
+for tag_expr in "messaging.destination.name%3Dmessages.db" "messaging.destination%3Dmessages.db"; do
+  mongo_search=$(curl -s -G "${TEMPO_URL}/api/search" \
+    --data "tags=${tag_expr}&start=${MONGO_CHECK_START}&end=${MONGO_CHECK_END}&limit=1" 2>/dev/null)
+  mongo_count=$(echo "$mongo_search" | grep -c '"traceID"' 2>/dev/null || true)
+  [ -z "${mongo_count:-}" ] && mongo_count=0
+  if [ "${mongo_count:-0}" -ge 1 ]; then
+    break
+  fi
+done
+if [ "${mongo_count:-0}" -ge 1 ]; then
+  echo "  OK: Tempo search found messages.db span (Mongo propagation path signal present)"
+else
+  echo "  WARN: Tempo search did not find messages.db span for this time window."
+  echo "        Trace exists, but index/tag shape may differ by Tempo version."
+fi
 
 if command -v jq >/dev/null 2>&1; then
   span_count=0
@@ -203,7 +224,8 @@ else
   WS_CHECK_END=$(( $(date +%s) + 30 ))
   ws_search=$(curl -s -G "${TEMPO_URL}/api/search" \
     --data "tags=name%3Dwebsocket.send&start=${WS_CHECK_START}&end=${WS_CHECK_END}&limit=1" 2>/dev/null)
-  ws_count=$(echo "$ws_search" | grep -c '"traceID"' 2>/dev/null || echo "0")
+  ws_count=$(echo "$ws_search" | grep -c '"traceID"' 2>/dev/null || true)
+  [ -z "${ws_count:-}" ] && ws_count=0
   if [ "${ws_count:-0}" -lt 1 ]; then
     echo "  FAIL: No websocket.send spans found in Tempo for time window [${WS_CHECK_START}, ${WS_CHECK_END}]"
     echo "        (Worker must broadcast to at least one WS client; check WS_URL=$WS_URL)"
@@ -243,7 +265,8 @@ else
   PUSH_CHECK_END=$(( $(date +%s) + 30 ))
   push_search=$(curl -s -G "${TEMPO_URL}/api/search" \
     --data "tags=messaging.consumer.name%3Dworker-push-example&start=${PUSH_CHECK_START}&end=${PUSH_CHECK_END}&limit=1")
-  push_count=$(echo "$push_search" | grep -c '"traceID"' 2>/dev/null || echo "0")
+  push_count=$(echo "$push_search" | grep -c '"traceID"' 2>/dev/null || true)
+  [ -z "${push_count:-}" ] && push_count=0
   if [ "${push_count:-0}" -ge 1 ]; then
     echo "  OK: PushConsumer span found in Tempo (worker-push-example)"
   else

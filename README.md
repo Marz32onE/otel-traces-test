@@ -289,6 +289,23 @@ After clone run `git submodule update --init` for both submodules.
 | `NATS_URL`                     | `nats://localhost:4222`    |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`  | `localhost:4317`           |
 
+### instrumentation-go feature flags (important)
+
+`pkg/instrumentation-go` now treats module tracing flags as disabled by default when env vars are unset.
+To keep this demo's end-to-end trace propagation working, explicitly enable these flags in Go services
+(`api`, `worker`, `dbwatcher`):
+
+| Variable                                   | Required value |
+|--------------------------------------------|----------------|
+| `OTEL_INSTRUMENTATION_GO_TRACING_ENABLED`  | `true`         |
+| `OTEL_MONGO_TRACING_ENABLED`               | `true`         |
+| `OTEL_MONGO_PROPAGATION_ENABLED`           | `true`         |
+| `OTEL_NATS_TRACING_ENABLED`                | `true`         |
+| `OTEL_GORILLA_WS_TRACING_ENABLED`          | `true`         |
+
+If only the global switch is enabled but module switches are disabled, specific transport spans/propagation
+(Mongo/NATS/WebSocket) can still be missing.
+
 ### Frontend (build-time)
 
 | Variable                   | Default                    | Description |
