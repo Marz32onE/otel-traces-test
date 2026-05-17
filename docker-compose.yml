@@ -87,6 +87,7 @@ services:
       - OTEL_MONGO_TRACING_ENABLED=true
       - OTEL_MONGO_PROPAGATION_ENABLED=true
       - OTEL_NATS_TRACING_ENABLED=true
+      - OTEL_NATS_PROPAGATION_ENABLED=true
       - OTEL_GORILLA_WS_TRACING_ENABLED=true
     depends_on:
       nats:
@@ -107,11 +108,15 @@ services:
       - OTEL_MONGO_TRACING_ENABLED=true
       - OTEL_MONGO_PROPAGATION_ENABLED=true
       - OTEL_NATS_TRACING_ENABLED=true
+      - OTEL_NATS_PROPAGATION_ENABLED=true
       - OTEL_GORILLA_WS_TRACING_ENABLED=true
+      - OTEL_TRACES_SAMPLER=${OTEL_TRACES_SAMPLER:-always_on}
+      - OTEL_TRACES_SAMPLER_ARG=${OTEL_TRACES_SAMPLER_ARG:-}
       - MONGODB_URI=mongodb://mongodb:27017
       - WORKER_URL=http://worker:8082
     ports:
       - "8088:8088"
+      - "6060:6060"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -131,6 +136,7 @@ services:
       - OTEL_MONGO_TRACING_ENABLED=true
       - OTEL_MONGO_PROPAGATION_ENABLED=true
       - OTEL_NATS_TRACING_ENABLED=true
+      - OTEL_NATS_PROPAGATION_ENABLED=true
       - OTEL_GORILLA_WS_TRACING_ENABLED=true
       - MONGODB_URI=mongodb://mongodb:27017
     ports:
@@ -154,9 +160,13 @@ services:
       - OTEL_MONGO_TRACING_ENABLED=true
       - OTEL_MONGO_PROPAGATION_ENABLED=true
       - OTEL_NATS_TRACING_ENABLED=true
+      - OTEL_NATS_PROPAGATION_ENABLED=true
       - OTEL_GORILLA_WS_TRACING_ENABLED=true
+      - OTEL_TRACES_SAMPLER=${OTEL_TRACES_SAMPLER:-always_on}
+      - OTEL_TRACES_SAMPLER_ARG=${OTEL_TRACES_SAMPLER_ARG:-}
     ports:
       - "8082:8082"
+      - "6061:6060"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -179,7 +189,12 @@ services:
       - OTEL_MONGO_TRACING_ENABLED=true
       - OTEL_MONGO_PROPAGATION_ENABLED=true
       - OTEL_NATS_TRACING_ENABLED=true
+      - OTEL_NATS_PROPAGATION_ENABLED=true
       - OTEL_GORILLA_WS_TRACING_ENABLED=true
+      - OTEL_TRACES_SAMPLER=${OTEL_TRACES_SAMPLER:-always_on}
+      - OTEL_TRACES_SAMPLER_ARG=${OTEL_TRACES_SAMPLER_ARG:-}
+    ports:
+      - "6062:6060"
     depends_on:
       mongodb:
         condition: service_healthy

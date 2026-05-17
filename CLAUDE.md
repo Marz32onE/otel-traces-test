@@ -220,6 +220,21 @@ Git submodule at `https://github.com/Marz32onE/instrumentation-js`:
 | `VITE_WS_URL` | `ws://localhost:8082` | frontend (build-time) |
 | `VITE_OTEL_COLLECTOR_URL` | `http://localhost:4318` | frontend (build-time) |
 
+### Instrumentation feature flags
+
+Every flag below defaults to **disabled** when unset (universal default-OFF posture). Truthy values: any string other than `0`, `false`, `no`, `off` (case-insensitive, whitespace-trimmed). Each per-module flag is gated by the global master switch.
+
+| Variable | Module | Tier | Default | Purpose |
+|----------|--------|------|---------|---------|
+| `OTEL_INSTRUMENTATION_GO_TRACING_ENABLED` | all | global master | disabled | hard prerequisite for every per-module flag |
+| `OTEL_MONGO_TRACING_ENABLED` | otel-mongo (v1+v2) | module tracing | disabled | wrapper spans + `_oteltrace` document propagation |
+| `OTEL_MONGO_PROPAGATION_ENABLED` | otel-mongo (v1+v2) | module propagation | disabled | final say on `_oteltrace` inject/extract; only consulted when both tracing gates on |
+| `OTEL_NATS_TRACING_ENABLED` | otel-nats | module tracing | disabled | wrapper spans on Publish/Subscribe/Request and JetStream consumer paths |
+| `OTEL_NATS_PROPAGATION_ENABLED` | otel-nats | module propagation | disabled | final say on `traceparent`/`tracestate` header inject/extract; only consulted when both tracing gates on |
+| `OTEL_GORILLA_WS_TRACING_ENABLED` | otel-gorilla-ws | module tracing | disabled | wrapper spans + envelope wrap/unwrap (subject to subprotocol negotiation) |
+
+Surface per module: 3-tier for mongo + nats; 2-tier for ws. WS does not have a separate propagation flag because the envelope is built inline and there is no equivalent "wrapper span without wire propagation" scenario; the subprotocol-negotiation runtime check serves the same purpose as a propagation flag.
+
 ## Go Module Layout
 
 Each service has its own `go.mod` using **Go 1.26** and **OpenTelemetry v1.42.0**. Local instrumentation packages are referenced via `replace` directives pointing to `../pkg/instrumentation-go/...`. Dockerfiles use the repo root as build context and copy `pkg/instrumentation-go` into the image.

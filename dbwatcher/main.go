@@ -37,6 +37,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("otelsetup.Init: %v", err)
 	}
+	otelsetup.ListenPprof()
 	prop := otel.GetTextMapPropagator()
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

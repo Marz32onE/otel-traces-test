@@ -73,6 +73,7 @@ func Init(endpoint string, attrs ...attribute.KeyValue) (*sdktrace.TracerProvide
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(res),
+		sdktrace.WithSampler(SamplerFromEnv()),
 	)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-k6-scripts
+  labels:
+    app: k6
+data:
+  e2e-mixed.js: |
+{{ .Files.Get "files/e2e-mixed.js" | indent 4 }}

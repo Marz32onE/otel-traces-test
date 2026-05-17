@@ -2,19 +2,23 @@
 # Image names for api/worker/frontend: build locally and load into Kind (make kind-build), or push to registry.
 api:
   image:
-    # localhost/ prefix for images loaded via podman save + kind load image-archive (or docker)
     repository: localhost/otel-traces-test-api
     tag: latest
     pullPolicy: Never
   replicaCount: 1
   env:
     NATS_URL: "nats://nats:4222"
+    MONGODB_URI: "mongodb://mongodb:27017"
+    WORKER_URL: "http://otel-traces-test-worker:8082"
     OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
     OTEL_INSTRUMENTATION_GO_TRACING_ENABLED: "true"
     OTEL_MONGO_TRACING_ENABLED: "true"
     OTEL_MONGO_PROPAGATION_ENABLED: "true"
     OTEL_NATS_TRACING_ENABLED: "true"
+    OTEL_NATS_PROPAGATION_ENABLED: "true"
     OTEL_GORILLA_WS_TRACING_ENABLED: "true"
+    OTEL_TRACES_SAMPLER: "always_on"
+    OTEL_TRACES_SAMPLER_ARG: ""
 
 worker:
   image:
@@ -24,12 +28,42 @@ worker:
   replicaCount: 1
   env:
     NATS_URL: "nats://nats:4222"
+    MONGODB_URI: "mongodb://mongodb:27017"
     OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
     OTEL_INSTRUMENTATION_GO_TRACING_ENABLED: "true"
     OTEL_MONGO_TRACING_ENABLED: "true"
     OTEL_MONGO_PROPAGATION_ENABLED: "true"
     OTEL_NATS_TRACING_ENABLED: "true"
+    OTEL_NATS_PROPAGATION_ENABLED: "true"
     OTEL_GORILLA_WS_TRACING_ENABLED: "true"
+    OTEL_TRACES_SAMPLER: "always_on"
+    OTEL_TRACES_SAMPLER_ARG: ""
+
+dbwatcher:
+  enabled: true
+  image:
+    repository: localhost/otel-traces-test-dbwatcher
+    tag: latest
+    pullPolicy: Never
+  replicaCount: 1
+  env:
+    NATS_URL: "nats://nats:4222"
+    MONGODB_URI: "mongodb://mongodb:27017"
+    OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+    OTEL_INSTRUMENTATION_GO_TRACING_ENABLED: "true"
+    OTEL_MONGO_TRACING_ENABLED: "true"
+    OTEL_MONGO_PROPAGATION_ENABLED: "true"
+    OTEL_NATS_TRACING_ENABLED: "true"
+    OTEL_NATS_PROPAGATION_ENABLED: "true"
+    OTEL_GORILLA_WS_TRACING_ENABLED: "true"
+    OTEL_TRACES_SAMPLER: "always_on"
+    OTEL_TRACES_SAMPLER_ARG: ""
+
+mongodb:
+  image:
+    repository: mongo
+    tag: "7"
+    pullPolicy: IfNotPresent
 
 frontend:
   image:
@@ -37,7 +71,6 @@ frontend:
     tag: latest
     pullPolicy: Never
   replicaCount: 1
-  # Build args for frontend (browser reaches host ports when using Kind NodePort)
   viteApiUrl: "http://localhost:8088"
   viteWsUrl: "ws://localhost:8082"
   viteOtelCollectorUrl: "http://localhost:4318"
@@ -74,7 +107,16 @@ grafana:
     GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
     GF_AUTH_DISABLE_LOGIN_FORM: "true"
 
-# NodePort values (must be in Kubernetes range 30000-32767)
+# k6 load test: set runJob=true on helm upgrade to spawn Job (see make load-test-tcN)
+loadTest:
+  runJob: false
+  apiBaseUrl: "http://otel-traces-test-api:8088"
+  sendTraceparent: "true"
+  duration: "5m"
+  jetstreamRate: 80
+  coreRate: 60
+  mongoRate: 60
+
 nodePorts:
   api: 30081
   worker: 30082

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api-pprof
+  labels:
+    app: api
+spec:
+  selector:
+    app: api
+  ports:
+    - name: pprof
+      port: 6060
+      targetPort: 6060

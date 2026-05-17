@@ -20,18 +20,11 @@ spec:
           imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
           ports:
             - containerPort: 8082
+            - containerPort: 6060
+              name: pprof
           env:
             - name: NATS_URL
               value: {{ .Values.worker.env.NATS_URL | quote }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.worker.env.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}
-            - name: OTEL_INSTRUMENTATION_GO_TRACING_ENABLED
-              value: {{ .Values.worker.env.OTEL_INSTRUMENTATION_GO_TRACING_ENABLED | quote }}
-            - name: OTEL_MONGO_TRACING_ENABLED
-              value: {{ .Values.worker.env.OTEL_MONGO_TRACING_ENABLED | quote }}
-            - name: OTEL_MONGO_PROPAGATION_ENABLED
-              value: {{ .Values.worker.env.OTEL_MONGO_PROPAGATION_ENABLED | quote }}
-            - name: OTEL_NATS_TRACING_ENABLED
-              value: {{ .Values.worker.env.OTEL_NATS_TRACING_ENABLED | quote }}
-            - name: OTEL_GORILLA_WS_TRACING_ENABLED
-              value: {{ .Values.worker.env.OTEL_GORILLA_WS_TRACING_ENABLED | quote }}
+            - name: MONGODB_URI
+              value: {{ .Values.worker.env.MONGODB_URI | quote }}
+            {{- include "otel-traces-test.otelEnv" .Values.worker.env | nindent 12 }}

@@ -28,6 +28,7 @@ HELM_NAMESPACE ?= otel
 
 .PHONY: up down clean restart build logs ps help detect verify-trace up-verify up-ws-trace down-ws-trace logs-ws-trace verify-ws-trace
 .PHONY: kind-build kind-install kind-uninstall kind-verify kind-up kind-down
+.PHONY: load-test-tc1 load-test-tc2 load-test-tc3 load-test-tc4 load-test-tc5 load-test-kind load-test-compose
 
 # Show all auto-detected variables
 detect:
@@ -104,6 +105,7 @@ help:
 kind-build:
 	$(DOCKER_CMD) build -t localhost/otel-traces-test-api:latest -f api/Dockerfile .
 	$(DOCKER_CMD) build -t localhost/otel-traces-test-worker:latest -f worker/Dockerfile .
+	$(DOCKER_CMD) build -t localhost/otel-traces-test-dbwatcher:latest -f dbwatcher/Dockerfile .
 	$(DOCKER_CMD) build -t localhost/otel-traces-test-frontend:latest \
 		--build-arg VITE_API_URL=http://localhost:8088 \
 		--build-arg VITE_WS_URL=ws://localhost:8082 \
@@ -112,9 +114,26 @@ kind-build:
 	@# Podman: kind load docker-image does not see podman store; use save + load image-archive
 	@$(DOCKER_CMD) save -o /tmp/otel-traces-test-api.tar localhost/otel-traces-test-api:latest
 	@$(DOCKER_CMD) save -o /tmp/otel-traces-test-worker.tar localhost/otel-traces-test-worker:latest
+	@$(DOCKER_CMD) save -o /tmp/otel-traces-test-dbwatcher.tar localhost/otel-traces-test-dbwatcher:latest
 	@$(DOCKER_CMD) save -o /tmp/otel-traces-test-frontend.tar localhost/otel-traces-test-frontend:latest
-	kind load image-archive /tmp/otel-traces-test-api.tar /tmp/otel-traces-test-worker.tar /tmp/otel-traces-test-frontend.tar --name $(KIND_CLUSTER)
-	@rm -f /tmp/otel-traces-test-api.tar /tmp/otel-traces-test-worker.tar /tmp/otel-traces-test-frontend.tar
+	kind load image-archive /tmp/otel-traces-test-api.tar /tmp/otel-traces-test-worker.tar /tmp/otel-traces-test-dbwatcher.tar /tmp/otel-traces-test-frontend.tar --name $(KIND_CLUSTER)
+	@rm -f /tmp/otel-traces-test-api.tar /tmp/otel-traces-test-worker.tar /tmp/otel-traces-test-dbwatcher.tar /tmp/otel-traces-test-frontend.tar
+
+load-test-compose:
+	@bash scripts/load-test/run-tc-compose.sh $(or $(TC),1)
+
+load-test-kind:
+	@bash scripts/load-test/run-tc-kind.sh $(or $(TC),1)
+
+load-test-tc1: ; $(MAKE) load-test-compose TC=1
+load-test-tc2: ; $(MAKE) load-test-compose TC=2
+load-test-tc3: ; $(MAKE) load-test-compose TC=3
+load-test-tc4: ; $(MAKE) load-test-compose TC=4
+load-test-tc5: ; $(MAKE) load-test-compose TC=5
+
+# Run TC1–TC5 and write load/reports/load-test-report.html (zh-TW)
+load-test-report:
+	@bash scripts/load-test/run-all-report.sh
 
 # --- Minimal: frontend+Node WS trace ---
 WS_TRACE_COMPOSE_FILE ?= docker-compose.ws-trace.yml

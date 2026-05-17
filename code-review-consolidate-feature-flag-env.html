@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Code Review — consolidate-feature-flag-env (OpenSpec)</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface2: #243044;
+      --text: #e6edf3;
+      --muted: #8b9cb3;
+      --accent: #58a6ff;
+      --ok: #3fb950;
+      --warn: #d29922;
+      --crit: #f85149;
+      --border: #30363d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      margin: 0;
+      padding: 2rem clamp(1rem, 4vw, 3rem);
+      max-width: 1100px;
+      margin-inline: auto;
+    }
+    h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+    h2 {
+      font-size: 1.25rem;
+      margin-top: 2.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--accent);
+    }
+    h3 { font-size: 1.05rem; margin-top: 1.5rem; color: var(--text); }
+    .meta { color: var(--muted); font-size: 0.9rem; margin-bottom: 2rem; }
+    .verdict {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--warn);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      margin: 1.5rem 0;
+    }
+    .verdict strong { color: var(--warn); }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .badge-ok { background: rgba(63, 185, 80, 0.2); color: var(--ok); }
+    .badge-partial { background: rgba(210, 153, 34, 0.2); color: var(--warn); }
+    .badge-miss { background: rgba(248, 81, 73, 0.2); color: var(--crit); }
+    .badge-info { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      margin: 1rem 0;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.55rem 0.75rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--surface2); color: var(--muted); font-weight: 600; }
+    tr:nth-child(even) td { background: rgba(26, 35, 50, 0.5); }
+    code, pre {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 0.82rem;
+    }
+    code {
+      background: var(--surface2);
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+    }
+    pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem;
+      overflow-x: auto;
+    }
+    ul { padding-left: 1.25rem; }
+    li { margin: 0.35rem 0; }
+    .progress {
+      height: 10px;
+      background: var(--surface2);
+      border-radius: 5px;
+      overflow: hidden;
+      margin: 0.5rem 0 1rem;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--ok), var(--warn));
+      width: 60%;
+    }
+    .toc a { color: var(--accent); text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+    .toc li { margin: 0.25rem 0; }
+    footer {
+      margin-top: 3rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Code Review：consolidate-feature-flag-env</h1>
+<p class="meta">
+  專案：<code>otel-traces-test</code> / <code>pkg/instrumentation-go</code><br />
+  OpenSpec change：<code>openspec/changes/consolidate-feature-flag-env</code><br />
+  審查日期：2026-05-17<br />
+  範圍：OpenSpec 提案／設計／規格／tasks 與四個 Go instrumentation 模組實作對照
+</p>
+
+<div class="verdict">
+  <strong>總評：部分完成（約 60% tasks），核心功能已落地，尚不宜歸檔。</strong>
+  <p>
+    <code>internal/flags</code> 共用 helper、<code>otel-nats</code> 三層 propagation gate、
+    <code>connImpl</code> 策略分流，以及 performance invariants 測試，品質良好。
+    但 OpenSpec 仍有多項未完成工作（目錄 layout、CI drift-check、文件、整合測試、
+    <code>otel-gorilla-ws</code> / <code>otel-mongo</code> Client 策略分流），
+    且 <strong>demo 部署未設定 <code>OTEL_NATS_PROPAGATION_ENABLED=true</code></strong>，
+    與 proposal 聲稱「consumer 無需改 env」矛盾，會使 NATS 端到端 trace 在預設配置下斷鏈。
+  </p>
+</div>
+
+<h2 id="toc">目錄</h2>
+<ol class="toc">
+  <li><a href="#summary">執行摘要</a></li>
+  <li><a href="#openspec">OpenSpec 工件品質</a></li>
+  <li><a href="#matrix">規格 vs 實作對照</a></li>
+  <li><a href="#tasks">Tasks 完成度</a></li>
+  <li><a href="#strengths">做得好的地方</a></li>
+  <li><a href="#critical">必須修正（Critical）</a></li>
+  <li><a href="#gaps">應改進項目</a></li>
+  <li><a href="#tests">驗證狀態</a></li>
+  <li><a href="#next">建議後續步驟</a></li>
+</ol>
+
+<h2 id="summary">執行摘要</h2>
+
+<div class="progress" aria-label="Tasks 約 60% 完成"><div class="progress-bar"></div></div>
+<p><strong>Tasks：</strong> 100 項中約 60 項已勾選完成（<code>tasks.md</code>）。</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>能力／模組</th>
+      <th>狀態</th>
+      <th>說明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>instrumentation-feature-flags</code></td>
+      <td><span class="badge badge-partial">大部分</span></td>
+      <td>四模組 <code>internal/flags/flags.go</code> 內容一致；<code>EnvEnabled</code> / <code>Gate</code> 已實作並有測試。缺 CI drift-check。</td>
+    </tr>
+    <tr>
+      <td><code>otel-nats-flag-wiring</code></td>
+      <td><span class="badge badge-partial">大部分</span></td>
+      <td>三層 gate + <code>connImpl</code>（<code>directConn</code>/<code>tracedConn</code>）完成；未遷至 <code>internal/{direct,traced}/</code>。JetStream 部分測試仍缺。</td>
+    </tr>
+    <tr>
+      <td><code>otel-mongo-flag-wiring</code></td>
+      <td><span class="badge badge-partial">大部分</span></td>
+      <td>v1/v2 已接 <code>internal/flags</code>；Collection 等已有 strategy-split。Client/Database 仍為 cached-gate。</td>
+    </tr>
+    <tr>
+      <td><code>otel-gorilla-ws-flag-wiring</code></td>
+      <td><span class="badge badge-partial">部分</span></td>
+      <td><code>wsGate</code> 已接 shared flags；Conn 仍於 public method 內分支，無 <code>connImpl</code> / <code>internal/direct</code>。</td>
+    </tr>
+    <tr>
+      <td><code>module-directory-layout</code></td>
+      <td><span class="badge badge-partial">部分</span></td>
+      <td><code>otel-mongo/examples</code> 已存在；nats/ws 的 examples 目錄需再確認；四模組 layout 未完全統一。</td>
+    </tr>
+    <tr>
+      <td><code>performance-invariants</code></td>
+      <td><span class="badge badge-ok">完成</span></td>
+      <td>tasks §14 全勾；對應 regression tests 已存在（propagation-off span、sampler gate、marshalWire pool 等）。</td>
+    </tr>
+    <tr>
+      <td><code>otel-traces-test</code> 部署</td>
+      <td><span class="badge badge-miss">缺口</span></td>
+      <td><code>docker-compose.yml</code> / Helm <strong>未</strong> 設定 <code>OTEL_NATS_PROPAGATION_ENABLED</code>。</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="openspec">OpenSpec 工件品質</h2>
+
+<h3>Proposal / Design</h3>
+<p>
+  文件結構完整：動機（三套件 flag 行為漂移）、目標（統一 default-OFF、strategy-split、
+  <code>sync.Once</code> 快取）、影響面（NATS propagation 破壞性變更）與遷移說明皆清楚。
+  Design 的 D1–D6 決策可追溯至各 <code>specs/*.md</code>。
+</p>
+<p><strong>文件內部矛盾（需修正其一）：</strong></p>
+<ul>
+  <li>
+    <code>proposal.md</code> Impact 寫：「Consumers: otel-traces-test — <strong>no env wiring changes needed</strong>」
+  </li>
+  <li>
+    同檔案又寫：tracing-on  alone 的部署必須加 <code>OTEL_NATS_PROPAGATION_ENABLED=true</code>
+  </li>
+  <li>
+    實際 <code>docker-compose.yml</code> / <code>charts/otel-traces-test/values.yaml</code> 僅設
+    <code>OTEL_NATS_TRACING_ENABLED=true</code>，<strong>未</strong> 設 propagation — 屬於後者情境，端到端 NATS trace 會斷
+  </li>
+</ul>
+
+<h3>Specs（7 份 capability spec）</h3>
+<p>
+  規格品質高：多數 requirement 附 GIVEN/WHEN/THEN scenario，performance-invariants 錨定具體原始檔，
+  利於 code review。適合在歸檔前跑 openspec verify（若專案有該 workflow）。
+</p>
+
+<h3>Tasks.md</h3>
+<p>
+  任務拆解細緻，並誠實標註「deferred」項（5.3–5.5 nats internal 分包、6.3–6.7 ws strategy-split）。
+  建議歸檔前將 deferred 項轉成 follow-up issue 或從 spec 降級為 SHOULD，避免 spec 與 tasks 長期不一致。
+</p>
+
+<h2 id="matrix">規格 vs 實作對照</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Requirement（摘要）</th>
+      <th>預期</th>
+      <th>實作觀察</th>
+      <th>符合？</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>四模組 <code>internal/flags</code> 位元組一致</td>
+      <td>CI diff 四份 <code>flags.go</code></td>
+      <td>本機 <code>diff</code> 四份檔案 identical</td>
+      <td><span class="badge badge-ok">是</span></td>
+    </tr>
+    <tr>
+      <td>移除 <code>envEnabledByDefault</code></td>
+      <td>僅用 <code>flags.EnvEnabled</code></td>
+      <td>四模組 <code>env_flags.go</code> 已改用 <code>flags</code> package</td>
+      <td><span class="badge badge-ok">是</span></td>
+    </tr>
+    <tr>
+      <td>所有 flag default OFF</td>
+      <td>unset → false</td>
+      <td><code>EnvEnabled</code> + 測試涵蓋 falsy 集合</td>
+      <td><span class="badge badge-ok">是</span></td>
+    </tr>
+    <tr>
+      <td><code>OTEL_NATS_PROPAGATION_ENABLED</code> 三層 gate</td>
+      <td>tracing on + propagation unset → span 有、header 無</td>
+      <td><code>natsPropagationGate</code> + <code>tracedConn.propagationEnabled</code>；測試 <code>TestPublishWithPropagationOffSkipsHeaders</code> 等</td>
+      <td><span class="badge badge-ok">是</span></td>
+    </tr>
+    <tr>
+      <td><code>otelnats.Conn</code> 無 public method 內 <code>if tracingEnabled</code></td>
+      <td>僅 <code>c.impl.*</code></td>
+      <td><code>conn.go</code> 委派 <code>impl</code>；gate 僅在 <code>newConn</code></td>
+      <td><span class="badge badge-ok">是</span></td>
+    </tr>
+    <tr>
+      <td>NATS/JetStream 使用 <code>internal/{direct,traced}</code></td>
+      <td>編譯器強制 disabled path</td>
+      <td>同 package 的 <code>conn_direct.go</code> / <code>conn_traced.go</code>（tasks 標 deferred）</td>
+      <td><span class="badge badge-partial">功能有</span></td>
+    </tr>
+    <tr>
+      <td><code>otelgorillaws.Conn</code> strategy-split + 無 runtime gate</td>
+      <td><code>connImpl</code> 委派</td>
+      <td><code>conn.go</code> 仍 <code>if !c.featureEnabled</code> / <code>if c.tracingEnabled</code></td>
+      <td><span class="badge badge-miss">否</span></td>
+    </tr>
+    <tr>
+      <td>Mongo Client/Database strategy-split</td>
+      <td><code>internal/direct.Client</code></td>
+      <td><code>client.go</code> 仍 cached <code>tracingEnabled bool</code></td>
+      <td><span class="badge badge-miss">否</span></td>
+    </tr>
+    <tr>
+      <td><code>mongoTracingEnabled</code> 用 <code>flags.Gate</code></td>
+      <td>process-level cache</td>
+      <td>每次呼叫 <code>flags.EnvEnabled</code>（Connect 時呼叫，非 hot path）</td>
+      <td><span class="badge badge-partial">可接受</span></td>
+    </tr>
+    <tr>
+      <td>CI drift-check + grep 守衛</td>
+      <td>防 flags 漂移、direct 無 sdk import</td>
+      <td><code>.github/workflows</code> 未見相關 step</td>
+      <td><span class="badge badge-miss">否</span></td>
+    </tr>
+    <tr>
+      <td>README / CHANGELOG 遷移說明</td>
+      <td>NATS propagation 預設 OFF</td>
+      <td><code>otel-nats</code> README 無 Propagation 專節；無 CHANGELOG 條目</td>
+      <td><span class="badge badge-miss">否</span></td>
+    </tr>
+    <tr>
+      <td>otel-traces-test 部署相容</td>
+      <td>端到端 trace 不斷</td>
+      <td>compose/helm 缺 <code>OTEL_NATS_PROPAGATION_ENABLED=true</code></td>
+      <td><span class="badge badge-miss">否</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="tasks">Tasks 完成度（依區段）</h2>
+
+<table>
+  <thead>
+    <tr><th>區段</th><th>主題</th><th>狀態</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>§1</td><td>Shared <code>internal/flags</code></td><td><span class="badge badge-ok">完成</span></td></tr>
+    <tr><td>§2–3</td><td>otel-mongo v1/v2 wiring</td><td><span class="badge badge-partial">單元測試 OK；整合測試未勾</span></td></tr>
+    <tr><td>§4</td><td>Mongo Client/Database strategy-split</td><td><span class="badge badge-miss">未做</span></td></tr>
+    <tr><td>§5</td><td>otel-nats wiring</td><td><span class="badge badge-partial">核心完成；internal 分包 deferred</span></td></tr>
+    <tr><td>§6</td><td>otel-gorilla-ws</td><td><span class="badge badge-partial">flags only；strategy-split deferred</span></td></tr>
+    <tr><td>§7</td><td>Directory layout</td><td><span class="badge badge-partial">examples 部分；7.6–7.8 未勾</span></td></tr>
+    <tr><td>§8</td><td>CI drift-check</td><td><span class="badge badge-miss">未做</span></td></tr>
+    <tr><td>§9</td><td>Documentation</td><td><span class="badge badge-miss">未做</span></td></tr>
+    <tr><td>§10</td><td>Versioning / release</td><td><span class="badge badge-partial">版本號 0.4.0；tag/consumer pin 未做</span></td></tr>
+    <tr><td>§11</td><td>Final verification (Tempo)</td><td><span class="badge badge-miss">未做</span></td></tr>
+    <tr><td>§12–13</td><td>NATS propagation flag + tests</td><td><span class="badge badge-partial">實作+多數測試；README/CHANGELOG/13.4–13.5/13.9 缺</span></td></tr>
+    <tr><td>§14</td><td>Performance invariants</td><td><span class="badge badge-ok">完成</span></td></tr>
+  </tbody>
+</table>
+
+<h2 id="strengths">做得好的地方</h2>
+
+<ul>
+  <li>
+    <strong>OpenSpec 驅動開發：</strong> proposal → design → 分 capability spec → tasks 鏈條完整，
+    尤其 <code>performance-invariants</code> 把 hot-path 規則寫成 SHALL + 檔案錨點，利於長期維護。
+  </li>
+  <li>
+    <strong><code>internal/flags</code> 設計：</strong> <code>EnvEnabled</code> falsy 語意一致、
+    <code>Gate</code> + <code>ResetForTest</code> 符合 otel-mongo 既有快取契約；四模組檔案一致。
+  </li>
+  <li>
+    <strong>otel-nats 三層 gate：</strong> <code>natsPropagationGate</code> 在 construction 快取到
+    <code>tracedConn.propagationEnabled</code>，hot path 不讀 env；inject/extract 正確分離。
+  </li>
+  <li>
+    <strong>otel-nats <code>connImpl</code>：</strong> public API 乾淨委派，disabled path 無 OTel span；
+    與 spec「public method 無 tracingEnabled 分支」一致。
+  </li>
+  <li>
+    <strong>測試覆蓋 propagation 矩陣：</strong>
+    <code>TestDefaultBehaviorIsTracingOnlyNoHeaders</code>、
+    <code>TestPropagationFlagRestoresFullWireOutput</code> 等直接鎖定 v0.3→v0.4 行為變更，避免 regression。
+  </li>
+  <li>
+    <strong>otel-mongo 既有 strategy-split：</strong> Collection/Cursor 等 <code>internal/{direct,traced,shared}</code>
+    是此 change 的模板；v1/v2 parity 意識在 CLAUDE.md 與 spec 中反覆強調。
+  </li>
+</ul>
+
+<h2 id="critical">必須修正（Critical）</h2>
+
+<h3>1. Demo 堆疊未啟用 NATS propagation — 端到端 trace 會斷</h3>
+<p>
+  新預設下，僅 <code>OTEL_NATS_TRACING_ENABLED=true</code> 會產生 local span，
+  <strong>不會</strong> 注入 <code>traceparent</code>。目前配置：
+</p>
+<pre>docker-compose.yml / charts/otel-traces-test/values.yaml（api、worker 等）：
+  OTEL_INSTRUMENTATION_GO_TRACING_ENABLED=true
+  OTEL_NATS_TRACING_ENABLED=true
+  # 缺少 OTEL_NATS_PROPAGATION_ENABLED=true</pre>
+<p><strong>建議：</strong> 在所有發布/訂閱 NATS 的服務加上：</p>
+<pre>OTEL_NATS_PROPAGATION_ENABLED=true</pre>
+<p>並修正 <code>proposal.md</code> Impact 段落，刪除或改寫「no env wiring changes needed」。</p>
+
+<h3>2. Proposal 與實際部署不一致</h3>
+<p>
+  文件聲稱 consumer 無需變更，但 propagation 預設 OFF 的破壞性變更<strong>要求</strong> 顯式 env。
+  在歸檔 OpenSpec change 前應統一敘述，並在 README 提供 <code>grep</code> 遷移食譜（tasks 12.12）。
+</p>
+
+<h2 id="gaps">應改進項目（依優先順序）</h2>
+
+<h3>高優先</h3>
+<ul>
+  <li>完成 tasks §9 文件：<code>otel-nats</code> README/zh-TW、CHANGELOG、根 CLAUDE.md env 表與 migration footnote。</li>
+  <li>補齊 JetStream propagation 測試（tasks 13.9）與 <code>TestPublishWithTracingOff*</code>（13.4–13.5）。</li>
+  <li>執行 §11 final verification：<code>make verify-trace</code>、flag 矩陣在 Tempo 的實測。</li>
+  <li>新增 CI §8：四份 <code>flags.go</code> diff、<code>internal/direct</code> 禁止 otel/sdk import grep。</li>
+</ul>
+
+<h3>中優先</h3>
+<ul>
+  <li><code>otel-gorilla-ws</code>：依 spec 遷移至 <code>connImpl</code> + <code>internal/{direct,traced}</code>（tasks 6.3–6.7）。</li>
+  <li><code>otel-mongo</code> Client/Database strategy-split（tasks §4）。</li>
+  <li>將 otel-nats 的 <code>conn_direct</code>/<code>conn_traced</code> 移入 <code>internal/direct</code>、<code>internal/traced</code> 以符合 module-directory-layout。</li>
+  <li><code>mongoTracingEnabled</code> 改為 <code>flags.Gate</code>（與 nats/ws 對齊，滿足 spec 字面）。</li>
+</ul>
+
+<h3>低優先</h3>
+<ul>
+  <li>整合測試（mongo/nats <code>tests/integration</code>）在 CI 或 release checklist 中固定執行。</li>
+  <li>歸檔前更新 <code>pkg/instrumentation-go/CLAUDE.md</code>：cached-gate vs strategy-split 現況與 3-tier NATS 表。</li>
+  <li>Release tags + consumer <code>go.mod</code> pin（tasks 10.5–10.6）。</li>
+</ul>
+
+<h2 id="tests">驗證狀態（審查當日）</h2>
+
+<table>
+  <thead>
+    <tr><th>命令</th><th>結果</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>cd pkg/instrumentation-go/otel-nats && go test -race ./...</code></td>
+      <td><span class="badge badge-ok">通過</span>（105 tests）</td>
+    </tr>
+    <tr>
+      <td><code>cd pkg/instrumentation-go/otel-gorilla-ws && go test -race ./...</code></td>
+      <td><span class="badge badge-ok">通過</span>（69 tests）</td>
+    </tr>
+    <tr>
+      <td><code>cd pkg/instrumentation-go/otel-mongo && go test -race ./...</code></td>
+      <td><span class="badge badge-partial">執行逾時</span>（本環境未在時限內完成；建議本機重跑）</td>
+    </tr>
+    <tr>
+      <td><code>diff</code> 四份 <code>internal/flags/flags.go</code></td>
+      <td><span class="badge badge-ok">identical</span></td>
+    </tr>
+    <tr>
+      <td><code>make verify-trace</code> / integration</td>
+      <td><span class="badge badge-miss">未執行</span>（tasks §11 未勾）</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="next">建議後續步驟</h2>
+
+<ol>
+  <li><strong>立即：</strong> 在 <code>docker-compose.yml</code>、Helm <code>values.yaml</code>、deployment templates 加入 <code>OTEL_NATS_PROPAGATION_ENABLED=true</code>；跑 <code>make verify-trace</code> 確認 JetStream/Core/Mongo 路徑 trace 連續。</li>
+  <li><strong>歸檔前：</strong> 完成 tasks §8–§9、§11；補 JetStream propagation 測試；修正 proposal 矛盾敘述。</li>
+  <li><strong>可排入 follow-up PR：</strong> ws/mongo Client strategy-split、nats internal 目錄分包（若維持 deferred，請在 spec 改為 SHOULD 或開 tracking issue）。</li>
+  <li>使用 <code>openspec-verify-change</code> skill／workflow 做正式 spec↔code 驗證後再 <code>openspec-archive-change</code>。</li>
+</ol>
+
+<h2>結論</h2>
+<p>
+  此 OpenSpec change 的<strong>核心價值已實現</strong>：統一 default-OFF 語意、共享 flags helper、
+  NATS propagation 獨立開關，以及 otel-nats 層級的策略分流與豐富的 regression 測試。
+  然而依 <code>tasks.md</code> 與 capability spec 的嚴格解讀，整體仍屬<strong>進行中</strong>：
+  文件、CI 守衛、layout 統一、gorilla-ws/mongo Client 遷移，以及 demo 部署的 propagation env
+  尚未對齊。建議先修復 NATS propagation 部署缺口並跑通 E2E，再考慮歸檔 OpenSpec change。
+</p>
+
+<footer>
+  產生方式：對照 <code>pkg/instrumentation-go/openspec/changes/consolidate-feature-flag-env/</code>
+  內 proposal、design、tasks、specs 與倉庫內 Go 原始碼、docker-compose、Helm 配置。
+  檔案路徑：<code>code-review-consolidate-feature-flag-env.html</code>
+</footer>
+
+</body>
+</html>

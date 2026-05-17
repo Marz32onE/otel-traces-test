@@ -1,0 +1,43 @@
+{{- if .Values.loadTest.runJob }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-k6-e2e
+  labels:
+    app: k6
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: k6
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.54.0
+          args:
+            - run
+            - /scripts/e2e-mixed.js
+          env:
+            - name: API_BASE_URL
+              value: {{ .Values.loadTest.apiBaseUrl | quote }}
+            - name: K6_SEND_TRACEPARENT
+              value: {{ .Values.loadTest.sendTraceparent | quote }}
+            - name: K6_DURATION
+              value: {{ .Values.loadTest.duration | quote }}
+            - name: K6_JETSTREAM_RATE
+              value: {{ .Values.loadTest.jetstreamRate | quote }}
+            - name: K6_CORE_RATE
+              value: {{ .Values.loadTest.coreRate | quote }}
+            - name: K6_MONGO_RATE
+              value: {{ .Values.loadTest.mongoRate | quote }}
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ .Release.Name }}-k6-scripts
+{{- end }}

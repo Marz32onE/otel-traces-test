@@ -1,0 +1,31 @@
+{{- if .Values.dbwatcher.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-dbwatcher
+  labels:
+    app: dbwatcher
+spec:
+  replicas: {{ .Values.dbwatcher.replicaCount }}
+  selector:
+    matchLabels:
+      app: dbwatcher
+  template:
+    metadata:
+      labels:
+        app: dbwatcher
+    spec:
+      containers:
+        - name: dbwatcher
+          image: "{{ .Values.dbwatcher.image.repository }}:{{ .Values.dbwatcher.image.tag }}"
+          imagePullPolicy: {{ .Values.dbwatcher.image.pullPolicy }}
+          ports:
+            - containerPort: 6060
+              name: pprof
+          env:
+            - name: MONGODB_URI
+              value: {{ .Values.dbwatcher.env.MONGODB_URI | quote }}
+            - name: NATS_URL
+              value: {{ .Values.dbwatcher.env.NATS_URL | quote }}
+            {{- include "otel-traces-test.otelEnv" .Values.dbwatcher.env | nindent 12 }}
+{{- end }}

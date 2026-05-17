@@ -1,0 +1,15 @@
+{{- if .Values.dbwatcher.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-dbwatcher-pprof
+  labels:
+    app: dbwatcher
+spec:
+  selector:
+    app: dbwatcher
+  ports:
+    - name: pprof
+      port: 6060
+      targetPort: 6060
+{{- end }}
