@@ -9,7 +9,7 @@ require (
 	github.com/Marz32onE/otel-traces-test/pkg/otelsetup v0.0.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.49.0
-	go.mongodb.org/mongo-driver/v2 v2.5.0
+	go.mongodb.org/mongo-driver/v2 v2.6.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0
 	go.opentelemetry.io/otel v1.42.0
 )

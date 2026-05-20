@@ -251,14 +251,14 @@ func main() {
 
 	// 3.5) JetStream PushConsumer example for backend integration tests.
 	// Uses an isolated subject to avoid duplicate broadcasts with existing pull consumers.
-	pushCons, err := s.CreateOrUpdatePushConsumer(ctx, oteljetstream.ConsumerConfig{
+	pushCons, err := s.CreateOrUpdateConsumer(ctx, oteljetstream.ConsumerConfig{
 		Durable:        "worker-push-example",
 		DeliverSubject: "worker.push.deliver",
 		FilterSubject:  "messages.push.it",
 		AckPolicy:      oteljetstream.AckExplicitPolicy,
 	})
 	if err != nil {
-		log.Printf("CreateOrUpdatePushConsumer(worker-push-example): %v", err)
+		log.Printf("CreateOrUpdateConsumer(worker-push-example): %v", err)
 	} else {
 		pushCC, pushErr := pushCons.Consume(func(m oteljetstream.Msg) {
 			log.Printf("[PushConsume] received: %s", string(m.Data()))
